@@ -1,0 +1,1244 @@
+const swaggerJsdoc = require('swagger-jsdoc');
+
+const swaggerOptions = {
+    definition: {
+        openapi: '3.0.0',
+        info: {
+            title: 'IoT Telehealth System API',
+            version: '1.0.0',
+            description: 'Tài liệu API cho hệ thống theo dõi sức khỏe IoT',
+        },
+        servers: [
+            { url: 'http://localhost:5000', description: 'Development server' },
+        ],
+        tags: [
+            { name: 'Health', description: 'Kiểm tra trạng thái server' },
+            { name: 'Auth', description: 'Xác thực người dùng' },
+            { name: 'Profile', description: 'Quản lý hồ sơ người dùng' },
+            { name: 'Vitals', description: 'Dữ liệu sinh hiệu' },
+            { name: 'Devices', description: 'Quản lý thiết bị đo' },
+            { name: 'Consent', description: 'Quản lý truy cập dữ liệu theo cơ chế đồng thuận' },
+            { name: 'Admin', description: 'Quản trị hệ thống và người dùng' },
+        ],
+        components: {
+            securitySchemes: {
+                BearerAuth: {
+                    type: 'http',
+                    scheme: 'bearer',
+                    bearerFormat: 'JWT',
+                    description: 'Nhập JWT token nhận được sau khi đăng nhập',
+                },
+                ConsentSessionHeader: {
+                    type: 'apiKey',
+                    in: 'header',
+                    name: 'x-consent-session-token',
+                    description: 'Bắt buộc với bác sĩ khi truy cập dữ liệu theo consent session',
+                },
+            },
+            schemas: {
+                User: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'integer', example: 1 },
+                        email: { type: 'string', format: 'email', example: 'user@gmail.com' },
+                        role: { type: 'string', enum: ['admin', 'doctor', 'patient'], example: 'patient' },
+                        full_name: { type: 'string', example: 'Nguyễn Văn A' },
+                        phone: { type: 'string', example: '0901234567' },
+                        is_active: { type: 'boolean', example: true },
+                        is_verified: { type: 'boolean', example: false },
+                        created_at: { type: 'string', format: 'date-time' },
+                    },
+                },
+                HealthRecord: {
+                    type: 'object',
+                    properties: {
+                        time: { type: 'string', format: 'date-time' },
+                        device_id: { type: 'string', example: 'DEV_01' },
+                        heart_rate: { type: 'number', example: 75 },
+                        spo2: { type: 'number', example: 98.5 },
+                        temperature: { type: 'number', example: 36.7 },
+                        ecg_value: { type: 'number', example: 0.85 },
+                        ecg_points: {
+                            type: 'array',
+                            nullable: true,
+                            items: { type: 'number' },
+                            example: [0.02, 0.08, 0.14, 0.09, 0.01, -0.06, -0.11],
+                        },
+                        session_id: { type: 'string', format: 'uuid', nullable: true },
+                        is_abnormal: { type: 'boolean', example: false },
+                        note: { type: 'string', nullable: true },
+                    },
+                },
+                HealthTrendPoint: {
+                    type: 'object',
+                    properties: {
+                        bucket_time: { type: 'string', format: 'date-time' },
+                        avg_heart_rate: { type: 'number', nullable: true },
+                        min_spo2: { type: 'number', nullable: true },
+                        avg_temperature: { type: 'number', nullable: true },
+                        ecg_samples: { type: 'integer' },
+                        abnormal_count: { type: 'integer' },
+                    },
+                },
+                ClinicalSummaryResponse: {
+                    type: 'object',
+                    properties: {
+                        device_id: { type: 'string', example: 'DEV_01' },
+                        latest: { $ref: '#/components/schemas/HealthRecord' },
+                        stats: {
+                            type: 'object',
+                            properties: {
+                                sample_count: { type: 'integer', example: 120 },
+                                abnormal_count: { type: 'integer', example: 4 },
+                                avg_heart_rate: { type: 'number', nullable: true, example: 89.5 },
+                                min_spo2: { type: 'number', nullable: true, example: 93 },
+                                max_temperature: { type: 'number', nullable: true, example: 38.1 },
+                            },
+                        },
+                        ai_summary: {
+                            type: 'object',
+                            properties: {
+                                rhythm: { type: 'string', example: 'Normal Sinus' },
+                                risk_score: { type: 'integer', minimum: 1, maximum: 10, example: 6 },
+                                clinical_alert: { type: 'string', example: 'Nguy cơ trung bình - cần theo dõi sát' },
+                            },
+                        },
+                    },
+                },
+                ConsentAccessCode: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'integer', example: 10 },
+                        code: { type: 'string', example: '123456' },
+                        device_id: { type: 'string', example: 'DEV_01' },
+                        patient_id: { type: 'integer', example: 5 },
+                        created_at: { type: 'string', format: 'date-time' },
+                        expires_at: { type: 'string', format: 'date-time' },
+                        revoked_at: { type: 'string', format: 'date-time', nullable: true },
+                    },
+                },
+                ConsentSession: {
+                    type: 'object',
+                    properties: {
+                        session_id: { type: 'string', format: 'uuid' },
+                        doctor_id: { type: 'integer' },
+                        patient_id: { type: 'integer' },
+                        device_id: { type: 'string' },
+                        issued_at: { type: 'string', format: 'date-time' },
+                        expires_at: { type: 'string', format: 'date-time' },
+                        revoked_at: { type: 'string', format: 'date-time', nullable: true },
+                    },
+                },
+                AdminDevice: {
+                    type: 'object',
+                    properties: {
+                        device_id: { type: 'string', example: 'DEV_01' },
+                        name: { type: 'string', nullable: true, example: 'Wearable V1' },
+                        type: { type: 'string', nullable: true, example: 'wearable' },
+                        status: { type: 'string', nullable: true, example: 'online' },
+                        firmware_version: { type: 'string', nullable: true, example: '1.0.2' },
+                        last_seen_at: { type: 'string', format: 'date-time', nullable: true },
+                        is_active: { type: 'boolean', example: true },
+                        owner_id: { type: 'integer', nullable: true, example: 5 },
+                        owner_email: { type: 'string', format: 'email', nullable: true, example: 'patient01@gmail.com' },
+                        owner_name: { type: 'string', nullable: true, example: 'Nguyen Van A' },
+                        created_at: { type: 'string', format: 'date-time', nullable: true },
+                        updated_at: { type: 'string', format: 'date-time', nullable: true },
+                    },
+                },
+                AuditLog: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'integer', example: 1 },
+                        actor_id: { type: 'integer', nullable: true, example: 2 },
+                        actor_role: { type: 'string', nullable: true, example: 'admin' },
+                        action: { type: 'string', example: 'device.assign_owner' },
+                        target_type: { type: 'string', nullable: true, example: 'device' },
+                        target_id: { type: 'string', nullable: true, example: 'DEV_01' },
+                        ip: { type: 'string', nullable: true, example: '127.0.0.1' },
+                        user_agent: { type: 'string', nullable: true, example: 'Mozilla/5.0' },
+                        meta: { type: 'object', nullable: true, additionalProperties: true },
+                        created_at: { type: 'string', format: 'date-time' },
+                    },
+                },
+                AdminSystemOverview: {
+                    type: 'object',
+                    properties: {
+                        users: {
+                            type: 'object',
+                            properties: {
+                                total_users: { type: 'integer', example: 120 },
+                                active_users: { type: 'integer', example: 96 },
+                                doctors: { type: 'integer', example: 20 },
+                                patients: { type: 'integer', example: 100 },
+                            },
+                        },
+                        devices: {
+                            type: 'object',
+                            properties: {
+                                total_devices: { type: 'integer', example: 80 },
+                                active_devices: { type: 'integer', example: 72 },
+                                online_devices: { type: 'integer', example: 45 },
+                            },
+                        },
+                        vitals: {
+                            type: 'object',
+                            properties: {
+                                total_vitals: { type: 'integer', example: 25000 },
+                                vitals_last_hour: { type: 'integer', example: 430 },
+                            },
+                        },
+                        abnormal: {
+                            type: 'object',
+                            properties: {
+                                abnormal_last_24h: { type: 'integer', example: 12 },
+                            },
+                        },
+                        consent: {
+                            type: 'object',
+                            properties: {
+                                active_consent_sessions: { type: 'integer', example: 3 },
+                            },
+                        },
+                        database: {
+                            type: 'object',
+                            properties: {
+                                database_size_bytes: { type: 'integer', format: 'int64', example: 104857600 },
+                            },
+                        },
+                        mqtt: {
+                            type: 'object',
+                            properties: {
+                                connected: { type: 'boolean', nullable: true },
+                                messages_total: { type: 'integer', nullable: true },
+                                messages_failed: { type: 'integer', nullable: true },
+                                last_message_at: { type: 'string', format: 'date-time', nullable: true },
+                                last_error_at: { type: 'string', format: 'date-time', nullable: true },
+                                last_error_message: { type: 'string', nullable: true },
+                            },
+                        },
+                        server: {
+                            type: 'object',
+                            properties: {
+                                uptime_seconds: { type: 'integer', example: 12345 },
+                                timestamp: { type: 'string', format: 'date-time' },
+                            },
+                        },
+                    },
+                },
+                PaginationMeta: {
+                    type: 'object',
+                    properties: {
+                        page: { type: 'integer', example: 1 },
+                        limit: { type: 'integer', example: 10 },
+                        total: { type: 'integer', example: 120 },
+                        pages: { type: 'integer', example: 12 },
+                    },
+                },
+                ValidationError: {
+                    type: 'object',
+                    properties: {
+                        errors: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            example: ['Email không hợp lệ', 'Mật khẩu phải có ít nhất 8 ký tự'],
+                        },
+                    },
+                },
+                ErrorResponse: {
+                    type: 'object',
+                    properties: {
+                        error: { type: 'string' },
+                    },
+                },
+            },
+        },
+        paths: {
+            '/': {
+                get: {
+                    tags: ['Health'],
+                    summary: 'Kiểm tra trạng thái server',
+                    responses: {
+                        '200': { description: 'Server hoạt động bình thường' },
+                    },
+                },
+            },
+            '/api/auth/register': {
+                post: {
+                    tags: ['Auth'],
+                    summary: 'Đăng ký tài khoản bệnh nhân',
+                    description: 'Tự đăng ký chỉ được phép với role `patient`. Tài khoản `doctor`/`admin` phải được tạo bởi quản trị viên.',
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['email', 'password'],
+                                    properties: {
+                                        email: { type: 'string', format: 'email', example: 'patient01@gmail.com' },
+                                        password: { type: 'string', example: 'Patient@123', description: 'Tối thiểu 8 ký tự, có chữ hoa, chữ thường và số' },
+                                        full_name: { type: 'string', example: 'Nguyễn Văn A' },
+                                        phone: { type: 'string', example: '0901234567' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '201': {
+                            description: 'Tạo tài khoản thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string', example: 'Tạo tài khoản thành công' },
+                                            user: { $ref: '#/components/schemas/User' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Dữ liệu đầu vào không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ValidationError' } } } },
+                        '409': { description: 'Email đã được sử dụng', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/auth/login': {
+                post: {
+                    tags: ['Auth'],
+                    summary: 'Đăng nhập',
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['email', 'password'],
+                                    properties: {
+                                        email: { type: 'string', format: 'email', example: 'patient01@gmail.com' },
+                                        password: { type: 'string', example: 'Patient@123' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Đăng nhập thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string', example: 'Đăng nhập thành công' },
+                                            token: { type: 'string', example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' },
+                                            user: {
+                                                type: 'object',
+                                                properties: {
+                                                    id: { type: 'integer' },
+                                                    email: { type: 'string' },
+                                                    role: { type: 'string' },
+                                                    full_name: { type: 'string' },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Thiếu email hoặc mật khẩu', content: { 'application/json': { schema: { $ref: '#/components/schemas/ValidationError' } } } },
+                        '401': { description: 'Sai email hoặc mật khẩu', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Tài khoản bị vô hiệu hóa', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '429': { description: 'Tài khoản bị khóa tạm thời do sai mật khẩu nhiều lần', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/health/history/{deviceId}': {
+                get: {
+                    tags: ['Vitals'],
+                    summary: 'Lịch sử sinh hiệu của thiết bị',
+                    description: 'Yêu cầu đăng nhập. Trả về danh sách bản ghi mới nhất.',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        {
+                            in: 'path',
+                            name: 'deviceId',
+                            required: true,
+                            schema: { type: 'string' },
+                            description: 'ID của thiết bị (ví dụ: DEV_01)',
+                        },
+                        {
+                            in: 'query',
+                            name: 'limit',
+                            required: false,
+                            schema: { type: 'integer', default: 50 },
+                            description: 'Số lượng bản ghi tối đa trả về',
+                        },
+                    ],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách dữ liệu sinh hiệu',
+                            content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/HealthRecord' } } } },
+                        },
+                        '401': { description: 'Chưa xác thực hoặc token không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/health/session/{sessionId}': {
+                get: {
+                    tags: ['Vitals'],
+                    summary: 'Dữ liệu theo phiên đo',
+                    description: 'Lấy toàn bộ bản ghi trong một phiên đo cụ thể. Yêu cầu đăng nhập.',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        {
+                            in: 'path',
+                            name: 'sessionId',
+                            required: true,
+                            schema: { type: 'string', format: 'uuid' },
+                            description: 'UUID của phiên đo',
+                        },
+                    ],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách bản ghi trong phiên đo',
+                            content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/HealthRecord' } } } },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/health/abnormal/{deviceId}': {
+                get: {
+                    tags: ['Vitals'],
+                    summary: 'Dữ liệu sinh hiệu bất thường',
+                    description: 'Chỉ dành cho **admin** và **doctor**. Lấy các bản ghi được đánh dấu bất thường của thiết bị.',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        {
+                            in: 'path',
+                            name: 'deviceId',
+                            required: true,
+                            schema: { type: 'string' },
+                            description: 'ID của thiết bị',
+                        },
+                    ],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách bản ghi bất thường',
+                            content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/HealthRecord' } } } },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Không có quyền truy cập', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/health/trends/{deviceId}': {
+                get: {
+                    tags: ['Vitals'],
+                    summary: 'Xu hướng chỉ số sinh hiệu theo thời gian',
+                    description: 'Bệnh nhân xem dữ liệu của mình; bác sĩ cần consent session token hợp lệ.',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        {
+                            in: 'path',
+                            name: 'deviceId',
+                            required: true,
+                            schema: { type: 'string' },
+                        },
+                        {
+                            in: 'query',
+                            name: 'hours',
+                            required: false,
+                            schema: { type: 'integer', default: 24, minimum: 1 },
+                            description: 'Khoảng thời gian truy vấn (giờ)',
+                        },
+                        {
+                            in: 'query',
+                            name: 'bucket_minutes',
+                            required: false,
+                            schema: { type: 'integer', default: 15, minimum: 1 },
+                            description: 'Độ rộng bucket cho dữ liệu trend (phút)',
+                        },
+                    ],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách điểm dữ liệu trend',
+                            content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/HealthTrendPoint' } } } },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Thiếu consent session token hoặc không có quyền', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/health/clinical-summary/{deviceId}': {
+                get: {
+                    tags: ['Vitals'],
+                    summary: 'Tóm tắt lâm sàng và risk score',
+                    description: 'Chỉ dành cho admin/doctor; bác sĩ yêu cầu consent session token hợp lệ.',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        {
+                            in: 'path',
+                            name: 'deviceId',
+                            required: true,
+                            schema: { type: 'string' },
+                        },
+                        {
+                            in: 'query',
+                            name: 'hours',
+                            required: false,
+                            schema: { type: 'integer', default: 24, minimum: 1 },
+                        },
+                    ],
+                    responses: {
+                        '200': {
+                            description: 'Tóm tắt lâm sàng',
+                            content: { 'application/json': { schema: { $ref: '#/components/schemas/ClinicalSummaryResponse' } } },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Không có quyền hoặc thiếu consent', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/consent/codes': {
+                post: {
+                    tags: ['Consent'],
+                    summary: 'Patient tạo mã truy cập tạm thời',
+                    security: [{ BearerAuth: [] }],
+                    requestBody: {
+                        required: false,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        device_id: { type: 'string', example: 'DEV_01' },
+                                        ttl_minutes: { type: 'integer', minimum: 1, maximum: 60, example: 30 },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '201': {
+                            description: 'Tạo mã thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            data: { $ref: '#/components/schemas/ConsentAccessCode' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Dữ liệu không hợp lệ hoặc chưa có thiết bị hoạt động', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Chỉ patient được tạo mã', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/consent/codes/active': {
+                get: {
+                    tags: ['Consent'],
+                    summary: 'Patient xem các mã còn hiệu lực',
+                    security: [{ BearerAuth: [] }],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách mã đang hoạt động',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            data: { type: 'array', items: { $ref: '#/components/schemas/ConsentAccessCode' } },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Chỉ patient được xem', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/consent/verify': {
+                post: {
+                    tags: ['Consent'],
+                    summary: 'Doctor/Admin xác thực mã để nhận consent session token',
+                    security: [{ BearerAuth: [] }],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['code'],
+                                    properties: {
+                                        code: { type: 'string', pattern: '^\\d{6}$', example: '123456' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Xác thực mã thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            data: {
+                                                type: 'object',
+                                                properties: {
+                                                    session_token: { type: 'string' },
+                                                    session: { $ref: '#/components/schemas/ConsentSession' },
+                                                    patient_summary: {
+                                                        type: 'object',
+                                                        properties: {
+                                                            id: { type: 'integer' },
+                                                            full_name: { type: 'string', nullable: true },
+                                                            age: { type: 'integer', nullable: true },
+                                                            device_id: { type: 'string' },
+                                                            device_name: { type: 'string', nullable: true },
+                                                            device_status: { type: 'string', nullable: true },
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Mã truy cập không đúng định dạng', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Chỉ doctor/admin được xác thực mã', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '404': { description: 'Mã không hợp lệ hoặc hết hạn', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/consent/sessions/active': {
+                get: {
+                    tags: ['Consent'],
+                    summary: 'Patient xem các phiên truy cập còn hiệu lực',
+                    security: [{ BearerAuth: [] }],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách phiên truy cập còn hiệu lực',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            data: { type: 'array', items: { $ref: '#/components/schemas/ConsentSession' } },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Chỉ patient được xem', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/consent/sessions/{sessionId}/revoke': {
+                post: {
+                    tags: ['Consent'],
+                    summary: 'Patient thu hồi quyền truy cập phiên',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        {
+                            in: 'path',
+                            name: 'sessionId',
+                            required: true,
+                            schema: { type: 'string', format: 'uuid' },
+                        },
+                    ],
+                    requestBody: {
+                        required: false,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        reason: { type: 'string', example: 'Da hoan thanh kham benh' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Thu hồi thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            data: { $ref: '#/components/schemas/ConsentSession' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Chỉ patient được thu hồi phiên', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '404': { description: 'Không tìm thấy phiên còn hiệu lực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/devices/my': {
+                get: {
+                    tags: ['Devices'],
+                    summary: 'Danh sách thiết bị của người dùng hiện tại',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        {
+                            in: 'query',
+                            name: 'include_inactive',
+                            required: false,
+                            schema: { type: 'boolean', default: true },
+                        },
+                    ],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách thiết bị',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            data: { type: 'array', items: { $ref: '#/components/schemas/AdminDevice' } },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/devices/register': {
+                post: {
+                    tags: ['Devices'],
+                    summary: 'Đăng ký hoặc claim thiết bị',
+                    description: 'Admin có thể tạo mới hoặc claim thiết bị. Patient/Doctor chỉ được claim thiết bị đã tồn tại trong hệ thống và chưa có owner (hoặc đã thuộc chính họ).',
+                    security: [{ BearerAuth: [] }],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['device_id'],
+                                    properties: {
+                                        device_id: { type: 'string', example: 'DEV_100' },
+                                        name: { type: 'string', example: 'Smart Band Home' },
+                                        type: { type: 'string', example: 'wearable' },
+                                        firmware_version: { type: 'string', example: '1.0.0' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '201': {
+                            description: 'Đăng ký thiết bị thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            device: { $ref: '#/components/schemas/AdminDevice' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Dữ liệu không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Không có quyền', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '404': { description: 'Thiết bị chưa tồn tại trong hệ thống', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '409': { description: 'Thiết bị thuộc owner khác', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/devices/{deviceId}': {
+                patch: {
+                    tags: ['Devices'],
+                    summary: 'Cập nhật thông tin thiết bị của người dùng',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        {
+                            in: 'path',
+                            name: 'deviceId',
+                            required: true,
+                            schema: { type: 'string' },
+                        },
+                    ],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        name: { type: 'string' },
+                                        type: { type: 'string' },
+                                        firmware_version: { type: 'string' },
+                                        is_active: { type: 'boolean' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Cập nhật thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            device: { $ref: '#/components/schemas/AdminDevice' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '403': { description: 'Không có quyền', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '404': { description: 'Không tìm thấy thiết bị', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/admin/system/overview': {
+                get: {
+                    tags: ['Admin'],
+                    summary: 'Tổng quan hệ thống cho admin',
+                    security: [{ BearerAuth: [] }],
+                    responses: {
+                        '200': {
+                            description: 'Tổng quan hệ thống',
+                            content: {
+                                'application/json': {
+                                    schema: { $ref: '#/components/schemas/AdminSystemOverview' },
+                                },
+                            },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Không có quyền', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/admin/system/audit-logs': {
+                get: {
+                    tags: ['Admin'],
+                    summary: 'Danh sách audit logs',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        { in: 'query', name: 'page', required: false, schema: { type: 'integer', default: 1 } },
+                        { in: 'query', name: 'limit', required: false, schema: { type: 'integer', default: 10 } },
+                        { in: 'query', name: 'action', required: false, schema: { type: 'string' } },
+                        { in: 'query', name: 'actor_role', required: false, schema: { type: 'string', enum: ['admin', 'doctor', 'patient'] } },
+                    ],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách logs',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            data: { type: 'array', items: { $ref: '#/components/schemas/AuditLog' } },
+                                            pagination: { $ref: '#/components/schemas/PaginationMeta' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Không có quyền', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/admin/system/devices': {
+                get: {
+                    tags: ['Admin'],
+                    summary: 'Danh sách thiết bị trong registry',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        { in: 'query', name: 'page', required: false, schema: { type: 'integer', default: 1 } },
+                        { in: 'query', name: 'limit', required: false, schema: { type: 'integer', default: 10 } },
+                        { in: 'query', name: 'status', required: false, schema: { type: 'string', enum: ['online', 'offline'] } },
+                        { in: 'query', name: 'search', required: false, schema: { type: 'string' } },
+                    ],
+                    responses: {
+                        '200': {
+                            description: 'Danh sách thiết bị',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            data: { type: 'array', items: { $ref: '#/components/schemas/AdminDevice' } },
+                                            pagination: { $ref: '#/components/schemas/PaginationMeta' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '403': { description: 'Không có quyền', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/admin/system/devices/{deviceId}/active': {
+                patch: {
+                    tags: ['Admin'],
+                    summary: 'Bật/tắt active cho thiết bị',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        { in: 'path', name: 'deviceId', required: true, schema: { type: 'string' } },
+                    ],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['is_active'],
+                                    properties: {
+                                        is_active: { type: 'boolean' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Cập nhật thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            device: { $ref: '#/components/schemas/AdminDevice' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Dữ liệu không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '404': { description: 'Không tìm thấy thiết bị', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/admin/system/devices/{deviceId}/owner': {
+                patch: {
+                    tags: ['Admin'],
+                    summary: 'Gán hoặc bỏ gán owner cho thiết bị',
+                    security: [{ BearerAuth: [] }],
+                    parameters: [
+                        { in: 'path', name: 'deviceId', required: true, schema: { type: 'string' } },
+                    ],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['owner_id'],
+                                    properties: {
+                                        owner_id: { type: 'integer', nullable: true },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Cập nhật owner thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            device: { $ref: '#/components/schemas/AdminDevice' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Dữ liệu không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '404': { description: 'Không tìm thấy thiết bị hoặc owner không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/profile': {
+                get: {
+                    tags: ['Profile'],
+                    operationId: 'getProfile',
+                    summary: 'Lấy hồ sơ của người dùng hiện tại',
+                    security: [{ BearerAuth: [] }],
+                    responses: {
+                        '200': {
+                            description: 'Hồ sơ người dùng',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            id: { type: 'integer' },
+                                            email: { type: 'string', format: 'email' },
+                                            role: { type: 'string', enum: ['admin', 'doctor', 'patient'] },
+                                            full_name: { type: 'string', nullable: true },
+                                            first_name: { type: 'string', nullable: true },
+                                            last_name: { type: 'string', nullable: true },
+                                            phone: { type: 'string', nullable: true },
+                                            date_of_birth: { type: 'string', format: 'date', nullable: true },
+                                            blood_type: { type: 'string', nullable: true },
+                                            height: { type: 'number', nullable: true },
+                                            weight: { type: 'number', nullable: true },
+                                            underlying_conditions: { type: 'string', nullable: true },
+                                            avatar_url: { type: 'string', nullable: true },
+                                            is_active: { type: 'boolean' },
+                                            is_verified: { type: 'boolean' },
+                                            created_at: { type: 'string', format: 'date-time' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+                put: {
+                    tags: ['Profile'],
+                    operationId: 'updateProfile',
+                    summary: 'Cập nhật hồ sơ',
+                    security: [{ BearerAuth: [] }],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        first_name: { type: 'string' },
+                                        last_name: { type: 'string' },
+                                        phone: { type: 'string' },
+                                        date_of_birth: { type: 'string', format: 'date' },
+                                        blood_type: { type: 'string', enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] },
+                                        height: { type: 'number' },
+                                        weight: { type: 'number' },
+                                        underlying_conditions: { type: 'string' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Cập nhật thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            profile: {
+                                                type: 'object',
+                                                additionalProperties: true,
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Dữ liệu không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/profile/avatar': {
+                post: {
+                    tags: ['Profile'],
+                    operationId: 'uploadAvatar',
+                    summary: 'Upload ảnh đại diện',
+                    security: [{ BearerAuth: [] }],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'multipart/form-data': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['avatar'],
+                                    properties: {
+                                        avatar: { type: 'string', format: 'binary' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Upload thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string' },
+                                            avatar_url: { type: 'string' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'File không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '401': { description: 'Chưa xác thực', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/auth/forgot-password': {
+                post: {
+                    tags: ['Auth'],
+                    summary: 'Yêu cầu đặt lại mật khẩu',
+                    description: 'Gửi email chứa link và mã OTP 6 chữ số (hết hạn sau 15 phút). Luôn trả 200 để tránh lộ thông tin user.',
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['email'],
+                                    properties: {
+                                        email: { type: 'string', format: 'email', example: 'patient01@gmail.com' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Luôn trả về thông báo chung (dù email tồn tại hay không)',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string', example: 'Nếu email tồn tại, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Email không hợp lệ', content: { 'application/json': { schema: { $ref: '#/components/schemas/ValidationError' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/auth/verify-reset-token': {
+                post: {
+                    tags: ['Auth'],
+                    summary: 'Xác thực token đặt lại mật khẩu',
+                    description: 'Kiểm tra token (từ link email) hoặc mã OTP còn hợp lệ không. Dùng trước khi cho phép nhập mật khẩu mới.',
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['token'],
+                                    properties: {
+                                        token: { type: 'string', example: 'abc123...hex64chars hoặc 123456 (OTP)' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Token hợp lệ',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string', example: 'Token hợp lệ' },
+                                            email: { type: 'string', format: 'email', example: 'patient01@gmail.com' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Token không hợp lệ hoặc đã hết hạn', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+            '/api/auth/reset-password': {
+                post: {
+                    tags: ['Auth'],
+                    summary: 'Đặt lại mật khẩu mới',
+                    description: 'Đặt mật khẩu mới bằng token (link) hoặc OTP nhận qua email. Token bị vô hiệu hóa ngay sau khi dùng.',
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    required: ['token', 'new_password'],
+                                    properties: {
+                                        token: { type: 'string', example: 'abc123...hex64chars hoặc 123456 (OTP)' },
+                                        new_password: { type: 'string', example: 'NewPass@456', description: 'Tối thiểu 8 ký tự, có chữ hoa, chữ thường và số' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: {
+                        '200': {
+                            description: 'Đặt lại mật khẩu thành công',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'object',
+                                        properties: {
+                                            message: { type: 'string', example: 'Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại' },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        '400': { description: 'Token không hợp lệ, hết hạn, hoặc mật khẩu yếu', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                        '500': { description: 'Lỗi server', content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } } },
+                    },
+                },
+            },
+        },
+    },
+    apis: ['./src/routes/**/*.js'],
+};
+
+module.exports = swaggerJsdoc(swaggerOptions);

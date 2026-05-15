@@ -1,0 +1,18 @@
+# ── ACL (Access Control List) cho Mosquitto ───────────────────────────────────
+#
+# Mô hình phân quyền:
+#   server  → Backend Node.js: subscribe toàn bộ vitals để nhận dữ liệu
+#   device  → ESP32/thiết bị đo: CHỈ được publish lên vitals/+/data
+#             Không thể subscribe, không thể publish topic khác
+#
+# Tài liệu: https://mosquitto.org/man/mosquitto-conf-5.html
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Backend server ─────────────────────────────────────────────────────────────
+user server
+topic readwrite #
+
+# ── ESP32 / Thiết bị đo ────────────────────────────────────────────────────────
+# Chỉ được publish dữ liệu, không được subscribe bất kỳ topic nào
+user device
+topic write vitals/+/data

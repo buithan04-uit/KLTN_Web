@@ -1,0 +1,70 @@
+services:
+  # 1. Database: TimescaleDB (Lưu trữ dữ liệu chuỗi thời gian ECG)
+  db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: telehealth_db
+    restart: always
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=123456
+      - POSTGRES_DB=telehealth_system
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./database/data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # 2. MQTT Broker: Mosquitto (Trạm trung chuyển dữ liệu từ ESP32)
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: telehealth_mqtt
+    restart: always
+    ports:
+      - "1883:1883" 
+      - "9001:9001" 
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+
+  # 3. DB Management: Adminer (Giao diện web để xem bảng dữ liệu)
+  adminer:
+    image: adminer
+    container_name: telehealth_adminer
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+  # 4. Backend: Node.js / Express API
+  backend:
+    build: ./backend
+    container_name: telehealth_backend
+    restart: always
+    ports:
+      - "5000:5000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override URL localhost → tên service trong Docker network
+      - DATABASE_URL=postgres://admin:123456@db:5432/telehealth_system
+      - MQTT_BROKER=mqtt://mosquitto:1883
+      - FRONTEND_URL=http://localhost:3001
+    depends_on:
+      - db
+      - mosquitto
+
+  # 5. Frontend: Next.js
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # NEXT_PUBLIC_* được bake vào lúc build — đổi IP nếu deploy lên server thật
+        - NEXT_PUBLIC_API_URL=http://localhost:5000
+    container_name: telehealth_frontend
+    restart: always
+    ports:
+      - "3001:3001"
+    depends_on:
+      - backend

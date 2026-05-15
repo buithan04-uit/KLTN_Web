@@ -1,0 +1,108 @@
+# Production Docker Compose Configuration for Ubuntu 24.04
+# Usage: docker-compose -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # 1. Database: TimescaleDB (Production Configuration)
+  db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: telehealth_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${DB_USER:-admin}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-changeme}
+      - POSTGRES_DB=${DB_NAME:-telehealth_system}
+    ports:
+      - "127.0.0.1:5432:5432"  # Only accessible from localhost
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - telehealth
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. MQTT Broker: Mosquitto (Production Configuration)
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: telehealth_mqtt
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1883:1883"  # Only accessible from localhost
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    networks:
+      - telehealth
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-t", "$SYS/#", "-C", "1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 3. Backend: Node.js / Express API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: telehealth_backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-5000}:${BACKEND_PORT:-5000}"
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - BACKEND_PORT=${BACKEND_PORT:-5000}
+      - DATABASE_URL=postgres://${DB_USER:-admin}:${DB_PASSWORD}@db:5432/${DB_NAME:-telehealth_system}
+      - MQTT_BROKER=${MQTT_BROKER:-mqtt://mosquitto:1883}
+      - FRONTEND_URL=${FRONTEND_URL:-https://yourdomain.com}
+      - BACKEND_URL=${BACKEND_URL:-https://api.yourdomain.com}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRY=${JWT_EXPIRY:-7d}
+    depends_on:
+      db:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - telehealth
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${BACKEND_PORT:-5000}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 4. Frontend: Next.js
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.yourdomain.com}
+        - NODE_ENV=${NODE_ENV:-production}
+    container_name: telehealth_frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.yourdomain.com}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - telehealth
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  telehealth:
+    driver: bridge

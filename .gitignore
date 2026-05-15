@@ -1,0 +1,16 @@
+# Node.js
+node_modules/
+npm-debug.log
+
+# Database & Docker volumes
+database/data/
+mosquitto/data/
+mosquitto/log/
+
+# Môi trường
+.env
+.env.local
+
+# Frontend Next.js build
+frontend/.next/
+frontend/out/
