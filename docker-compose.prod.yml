@@ -58,10 +58,9 @@ services:
     ports:
       - "127.0.0.1:5000:5000"
     environment:
-      # Các biến này OVERRIDE .env để đảm bảo trỏ đúng vào service Docker
       - NODE_ENV=production
       - PORT=5000
-      - DATABASE_URL=postgres://${DB_USER:-admin}:${DB_PASSWORD:-123456}@db:5432/${DB_NAME:-telehealth_system}
+      - DATABASE_URL=postgres://admin:123456@db:5432/telehealth_system  # hardcode thẳng
       - MQTT_BROKER=mqtt://mosquitto:1883
     depends_on:
       db:

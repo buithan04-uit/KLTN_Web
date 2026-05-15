@@ -5,6 +5,10 @@ const authMiddleware = require('../middlewares/auth.middleware');
 const roleMiddleware = require('../middlewares/role.middleware');
 const consentMiddleware = require('../middlewares/consent.middleware');
 
+router.get('/', (req, res) => {
+	res.status(200).json({ status: 'OK', message: 'Health check passed' });
+});
+
 // Lịch sử́ đo — bệnh nhân/bác sĩ/admin đều xem được
 router.get(
 	'/history/:deviceId',
