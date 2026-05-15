@@ -41,7 +41,7 @@ services:
     networks:
       - telehealth
     healthcheck:
-      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-u", "user", "-P", "pass", "-t", "$SYS/#", "-C", "1"]
+      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-u", "user", "-P", "pass", "-t", "$$SYS/#", "-C", "1"]
       interval: 10s
       timeout: 5s
       retries: 5
