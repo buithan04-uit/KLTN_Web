@@ -41,9 +41,7 @@ services:
     networks:
       - telehealth
     healthcheck:
-      # Hardcode credentials vì mosquitto container không có env vars
-      # Tài khoản "server" với mật khẩu từ file passwd
-      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-u", "server", "-P", "111111", "-t", "$$SYS/#", "-C", "1", "--quiet"]
+      test: ["CMD", "mosquitto_pub", "-h", "127.0.0.1", "-u", "server", "-P", "111111", "-t", "healthcheck", "-m", "ping", "--quiet"]
       interval: 10s
       timeout: 5s
       retries: 5
