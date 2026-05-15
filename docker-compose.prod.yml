@@ -21,7 +21,7 @@ services:
     networks:
       - telehealth
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin} -d ${DB_NAME:-telehealth_system}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -41,7 +41,7 @@ services:
     networks:
       - telehealth
     healthcheck:
-      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-t", "$SYS/#", "-C", "1"]
+      test: ["CMD", "mosquitto_sub", "-h", "127.0.0.1", "-t", "$$SYS/#", "-C", "1"]
       interval: 10s
       timeout: 5s
       retries: 5

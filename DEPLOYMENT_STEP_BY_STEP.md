@@ -1,7 +1,7 @@
 # 📘 HƯỚNG DẪN TRIỂN KHAI CHI TIẾT - Ubuntu 24.04 (Không Domain)
 
-**Ngày:** 15/05/2026  
-**Server:** 64.176.80.227  
+**Ngày:** 15/05/2026
+**Server:** 64.176.80.227
 **Status:** Bước-theo-bước, copy-paste được
 
 ---
@@ -82,7 +82,7 @@ root@64.176.80.227:~#
 ssh: connect to host 64.176.80.227 port 22 (tcp) failed: Connection refused
 ```
 
-**Nguyên nhân:** Server offline hoặc firewall chặn  
+**Nguyên nhân:** Server offline hoặc firewall chặn
 **Cách sửa:** Kiểm tra IP server hoặc chờ server khởi động lại
 
 ---
@@ -166,7 +166,7 @@ Resolving deltas: 100% (50/50), done.
 fatal: repository not found
 ```
 
-**Nguyên nhân:** URL repository sai  
+**Nguyên nhân:** URL repository sai
 **Cách sửa:** Kiểm tra lại URL, chắc chắn repository là public hoặc bạn có quyền truy cập
 
 ---
@@ -180,6 +180,9 @@ Tạo file chứa các biến môi trường (database password, API keys, etc.)
 ### Lệnh:
 
 ```bash
+#cd toi thu muc du an vua clone
+cd /home/kltn/KTLN_Web
+
 # Tạo file .env.production
 cat > .env.production << 'EOF'
 # Database Configuration
@@ -305,7 +308,7 @@ Chạy các Docker containers (Backend, Frontend, Database, MQTT).
 
 ```bash
 # Đảm bảo bạn trong thư mục /home/kltn
-cd /home/kltn
+cd /home/kltn/KTLN_Web
 
 # Khởi động tất cả containers
 docker-compose -f docker-compose.prod.yml up -d --build
@@ -346,7 +349,7 @@ telehealth_mqtt         Up 10 seconds
 ERROR: docker-compose.prod.yml not found
 ```
 
-**Nguyên nhân:** File không tồn tại  
+**Nguyên nhân:** File không tồn tại
 **Cách sửa:** Chắc chắn bạn đã clone dự án đầy đủ (xem lại Bước 3)
 
 ---
@@ -568,7 +571,7 @@ docker-compose -f docker-compose.prod.yml logs -f
 
 ### ❌ Lỗi: "Cannot connect to Docker daemon"
 
-**Nguyên nhân:** Docker chưa khởi động  
+**Nguyên nhân:** Docker chưa khởi động
 **Cách sửa:**
 
 ```bash
@@ -580,7 +583,7 @@ systemctl enable docker
 
 ### ❌ Lỗi: "Port 5000 already in use"
 
-**Nguyên nhân:** Port bị container khác sử dụng  
+**Nguyên nhân:** Port bị container khác sử dụng
 **Cách sửa:**
 
 ```bash
@@ -595,7 +598,7 @@ kill -9 <PID>
 
 ### ❌ Lỗi: "Cannot reach http://64.176.80.227:3001"
 
-**Nguyên nhân:** Containers chưa khởi động xong  
+**Nguyên nhân:** Containers chưa khởi động xong
 **Cách sửa:**
 
 ```bash
@@ -613,7 +616,7 @@ docker-compose -f docker-compose.prod.yml logs frontend
 
 ### ❌ Lỗi: "Connection refused" khi SSH
 
-**Nguyên nhân:** IP sai hoặc server offline  
+**Nguyên nhân:** IP sai hoặc server offline
 **Cách sửa:**
 
 ```bash
@@ -628,7 +631,7 @@ ssh root@64.176.80.227
 
 ### ❌ Lỗi: "docker-compose.prod.yml not found"
 
-**Nguyên nhân:** Chưa clone dự án hoặc sai đường dẫn  
+**Nguyên nhân:** Chưa clone dự án hoặc sai đường dẫn
 **Cách sửa:**
 
 ```bash
@@ -645,7 +648,7 @@ ls -la docker-compose.prod.yml
 
 ### ❌ Database Connection Error
 
-**Nguyên nhân:** Credentials sai hoặc DB chưa sẵn sàng  
+**Nguyên nhân:** Credentials sai hoặc DB chưa sẵn sàng
 **Cách sửa:**
 
 ```bash
@@ -806,5 +809,5 @@ Khi có domain, follow phần **CẬP NHẬT DOMAIN** để chuyển từ IP san
 - Restart: `docker-compose restart`
 - Dừng: `docker-compose down`
 
-**Ngày tạo:** 15/05/2026  
+**Ngày tạo:** 15/05/2026
 **Version:** 1.0
