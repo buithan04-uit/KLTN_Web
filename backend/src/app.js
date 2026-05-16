@@ -9,7 +9,10 @@ const app = express();
 
 // Middlewares
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: [
+    process.env.FRONTEND_URL,    // http://64.176.80.227:3001
+    'http://64.176.80.227',      // truy cập qua port 80
+  ].filter(Boolean),
   credentials: true,
 }));
 app.use(express.json());

@@ -13,7 +13,13 @@ const server = http.createServer(app);
 
 // Khởi tạo Socket.io
 const io = new Server(server, {
-    cors: { origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }
+    cors: {
+        origin: [
+            process.env.FRONTEND_URL,
+            'http://64.176.80.227',
+        ].filter(Boolean),
+        credentials: true
+    }
 });
 
 // Expose io to controllers via singleton
