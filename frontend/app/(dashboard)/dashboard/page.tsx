@@ -2,15 +2,17 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { io } from 'socket.io-client';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import type { HealthRecord } from '@/lib/types';
 import { useGetApiHealthHistoryDeviceId, useGetApiDevicesMy } from '@/lib/orval/api';
 import type { AdminDevice } from '@/lib/orval/api';
+import { aiApi, type AiStatus, type AiSummary } from '@/lib/api/ai';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 import {
   Heart, Activity, Thermometer, Droplets, AlertTriangle,
-  Wifi, WifiOff, Cpu, ChevronDown, RefreshCw,
+  Wifi, WifiOff, Cpu, ChevronDown, RefreshCw, BrainCircuit,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -250,6 +252,87 @@ function RecordsTable({ records }: { records: HealthRecord[] }) {
 }
 
 // ─── Main Dashboard ────────────────────────────────────────────────────────────
+const AI_STATUS_STYLES: Record<AiStatus, { box: string; text: string; badge: string; dot: string; label: string }> = {
+  normal: { box: 'border-emerald-200 bg-emerald-50', text: 'text-emerald-800', badge: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', label: 'On dinh' },
+  warning: { box: 'border-amber-200 bg-amber-50', text: 'text-amber-800', badge: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', label: 'Can theo doi' },
+  danger: { box: 'border-red-200 bg-red-50', text: 'text-red-800', badge: 'bg-red-100 text-red-700', dot: 'bg-red-500', label: 'Can bac si xem xet' },
+  unknown: { box: 'border-slate-200 bg-white', text: 'text-slate-700', badge: 'bg-slate-100 text-slate-600', dot: 'bg-slate-300', label: 'Chua du du lieu' },
+};
+
+function AiSummaryPanel({ summary, loading, error }: { summary?: AiSummary; loading: boolean; error: string }) {
+  const status = summary?.overall_status ?? 'unknown';
+  const styles = AI_STATUS_STYLES[status];
+  const models = summary ? Object.entries(summary.models) : [];
+
+  return (
+    <div className={`rounded-2xl border p-5 shadow-sm ${styles.box}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-white/80 p-2 border border-white">
+            <BrainCircuit className={`w-5 h-5 ${styles.text}`} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-slate-900">Tong hop AI chan doan</h2>
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${styles.badge}`}>
+                <span className={`w-2 h-2 rounded-full ${styles.dot}`} />
+                {styles.label}
+              </span>
+            </div>
+            <p className={`mt-1 text-sm font-medium ${styles.text}`}>
+              {loading ? 'Dang tong hop du lieu gan day...' : error || summary?.headline || 'Chua co ket qua AI'}
+            </p>
+            {summary?.summary && <p className="mt-1 text-sm text-slate-600">{summary.summary}</p>}
+            {summary?.status_reason && <p className="mt-1 text-xs text-slate-500">Ly do: {summary.status_reason}</p>}
+            <p className="mt-1 text-xs text-slate-500">Chi hien thi khi co du lieu doi chieu day du.</p>
+          </div>
+        </div>
+        <div className="text-right text-xs text-slate-500">
+          <div>{summary?.window.sample_count ?? 0} ket qua AI gan nhat</div>
+          {summary?.window.to && <div>Cap nhat {new Date(summary.window.to).toLocaleTimeString('vi-VN')}</div>}
+        </div>
+      </div>
+
+      {models.length > 0 && (
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          {models.map(([modelName, model]) => {
+            const modelStyles = AI_STATUS_STYLES[model.status];
+            const confidence = typeof model.latest.confidence === 'number'
+              ? `${Math.round(model.latest.confidence * 100)}%`
+              : 'N/A';
+            return (
+              <div key={modelName} className="rounded-xl border border-white/80 bg-white/80 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-slate-700">
+                    {modelName === 'vitals-risk' ? 'Sinh hieu tong hop' : modelName === 'ecg-arrhythmia' ? 'ECG arrhythmia' : modelName}
+                  </span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${modelStyles.badge}`}>
+                    {modelStyles.label}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-end gap-2">
+                  <span className={`text-xl font-bold ${modelStyles.text}`}>{model.latest.prediction_label}</span>
+                  <span className="text-xs text-slate-500 mb-1">confidence {confidence}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Tong hop {model.sample_count} ket qua trong cua so du lieu hien tai.
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <p className="mt-4 text-xs text-slate-500">
+        {summary?.disclaimer || 'AI chi ho tro tham khao trong qua trinh theo doi, khong thay the chan doan cua bac si.'}
+      </p>
+      <a href="/dashboard/ai-diagnosis" className="mt-3 inline-flex text-sm font-semibold text-sky-700 hover:text-sky-800">
+        Xem lai ket qua va du lieu doi chieu
+      </a>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { token, user } = useAuth();
   const [deviceId, setDeviceId] = useState('');
@@ -320,6 +403,19 @@ export default function DashboardPage() {
     { limit },
     { query: { refetchInterval: 15_000, enabled: !!token && !!selectedDeviceId } },
   );
+
+  const {
+    data: aiSummary,
+    isLoading: isAiSummaryLoading,
+    isError: isAiSummaryError,
+    error: aiSummaryQueryError,
+  } = useQuery({
+    queryKey: ['ai-summary', selectedDeviceId],
+    queryFn: () => aiApi.getSummary(selectedDeviceId, { limit: 30, token }),
+    enabled: !!token && !!selectedDeviceId,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
 
   const apiRecords = useMemo<HealthRecord[]>(
     () => (response?.status === 200 ? (response.data as HealthRecord[]) : []),
@@ -494,6 +590,18 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Vital cards ── */}
+      <AiSummaryPanel
+        summary={aiSummary}
+        loading={isAiSummaryLoading}
+        error={
+          isAiSummaryError
+            ? aiSummaryQueryError instanceof Error
+              ? aiSummaryQueryError.message
+              : 'Khong the tai tong hop AI'
+            : ''
+        }
+      />
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <VitalCard
           label="Nhịp tim"

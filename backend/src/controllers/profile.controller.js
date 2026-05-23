@@ -51,6 +51,7 @@ const updateProfile = async (req, res) => {
     const first_name = pick('first_name', 'firstName');
     const last_name = pick('last_name', 'lastName');
     const phone = body.phone;
+    const gender_raw = body.gender;
     const date_of_birth_raw = pick('date_of_birth', 'dateOfBirth');
     const blood_type = pick('blood_type', 'bloodType');
     const height = body.height;
@@ -59,8 +60,13 @@ const updateProfile = async (req, res) => {
 
     const date_of_birth = date_of_birth_raw === '' ? null : date_of_birth_raw;
     const underlying_conditions = underlying_conditions_raw === '' ? null : underlying_conditions_raw;
+    const gender = gender_raw === '' ? null : gender_raw;
 
     const VALID_BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+    const VALID_GENDERS = ['male', 'female', 'other'];
+    if (gender && !VALID_GENDERS.includes(String(gender).toLowerCase())) {
+        return res.status(400).json({ error: 'Gioi tinh khong hop le' });
+    }
     if (blood_type && !VALID_BLOOD_TYPES.includes(blood_type)) {
         return res.status(400).json({ error: 'Nhóm máu không hợp lệ' });
     }
@@ -69,6 +75,7 @@ const updateProfile = async (req, res) => {
     if (first_name !== undefined) payload.first_name = first_name;
     if (last_name !== undefined) payload.last_name = last_name;
     if (phone !== undefined) payload.phone = phone;
+    if (gender !== undefined) payload.gender = gender ? String(gender).toLowerCase() : null;
     if (date_of_birth !== undefined) payload.date_of_birth = date_of_birth;
     if (blood_type !== undefined) payload.blood_type = blood_type;
     if (height !== undefined) payload.height = height;

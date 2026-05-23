@@ -9,10 +9,12 @@
     "migrate:down": "node-pg-migrate down",
     "migrate:create": "node-pg-migrate create",
     "seed": "node scripts/run-seed.js",
+    "test:ai-web": "node scripts/test-ai-web-alerts.js",
     "test:all": "node scripts/test-all-flows.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
+    "@tensorflow/tfjs-node": "^4.22.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",

@@ -12,6 +12,7 @@ CREATE TABLE users (
     role VARCHAR(20) DEFAULT 'patient', -- admin, doctor, patient
     full_name TEXT,
     phone TEXT,
+    gender VARCHAR(20),
     is_active BOOLEAN NOT NULL DEFAULT true,
     is_verified BOOLEAN NOT NULL DEFAULT false,
     last_login_at TIMESTAMPTZ,
@@ -88,6 +89,9 @@ CREATE TABLE health_data (
     temperature DOUBLE PRECISION,
     ecg_value DOUBLE PRECISION,
     ecg_points JSONB,
+    systolic_bp DOUBLE PRECISION,
+    diastolic_bp DOUBLE PRECISION,
+    map DOUBLE PRECISION,
     session_id UUID,
     is_abnormal BOOLEAN NOT NULL DEFAULT false,
     note TEXT
@@ -155,6 +159,26 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+
+-- ============================================
+-- AI predictions
+-- ============================================
+CREATE TABLE IF NOT EXISTS ai_predictions (
+    id BIGSERIAL PRIMARY KEY,
+    health_time TIMESTAMPTZ,
+    device_id TEXT NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
+    model_name TEXT NOT NULL,
+    prediction_label TEXT NOT NULL,
+    confidence DOUBLE PRECISION,
+    probabilities JSONB,
+    input_snapshot JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_predictions_device_created
+    ON ai_predictions(device_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_predictions_model_created
+    ON ai_predictions(model_name, created_at DESC);
 
 -- ============================================
 -- Clinical analytics

@@ -83,7 +83,7 @@ const UserModel = {
     getProfile: async (id) => {
         const result = await db.query(
             `SELECT id, email, role, full_name, first_name, last_name, phone,
-                    date_of_birth, blood_type, height, weight,
+                    gender, date_of_birth, blood_type, height, weight,
                     underlying_conditions, avatar_url,
                     specialty, license_number, workplace, bio, department,
                     is_active, is_verified, created_at
@@ -113,6 +113,11 @@ const UserModel = {
         if (hasField('phone')) {
             updates.push(`phone = $${paramIndex++}`);
             params.push(payload.phone);
+        }
+
+        if (hasField('gender')) {
+            updates.push(`gender = $${paramIndex++}`);
+            params.push(payload.gender);
         }
 
         if (hasField('date_of_birth')) {
@@ -181,7 +186,7 @@ const UserModel = {
              SET ${updates.join(', ')}
              WHERE id = $${paramIndex}
              RETURNING id, email, role, full_name, first_name, last_name, phone,
-                       date_of_birth, blood_type, height, weight, underlying_conditions, avatar_url,
+                       gender, date_of_birth, blood_type, height, weight, underlying_conditions, avatar_url,
                        specialty, license_number, workplace, bio, department`,
             params
         );

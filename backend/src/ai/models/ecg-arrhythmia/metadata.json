@@ -1,0 +1,32 @@
+{
+  "window_size": 100,
+  "sampling_rate_hz": 360,
+  "training_dataset": "MIT-BIH Arrhythmia Database selected records",
+  "training_lead": "MLII/Lead II",
+  "window_alignment": "100 samples centered on annotated R-peak",
+  "runtime_window_selection": "strongest-deflection peak centered window",
+  "mean": -0.28766632142632625,
+  "std": 0.5241760803999351,
+  "classes": [
+    {
+      "id": 0,
+      "code": "N",
+      "label": "Normal beat"
+    },
+    {
+      "id": 1,
+      "code": "S",
+      "label": "Supraventricular ectopic beat"
+    },
+    {
+      "id": 2,
+      "code": "V",
+      "label": "Ventricular ectopic beat"
+    },
+    {
+      "id": 3,
+      "code": "F",
+      "label": "Fusion beat"
+    }
+  ]
+}

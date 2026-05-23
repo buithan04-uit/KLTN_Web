@@ -10,15 +10,28 @@ const normalizeEcgPoints = (ecg_points) => {
 };
 
 const HealthModel = {
-    insert: async ({ device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, session_id }) => {
+    insert: async ({
+        device_id,
+        heart_rate,
+        spo2,
+        temperature,
+        ecg_value,
+        ecg_points,
+        systolic_bp,
+        diastolic_bp,
+        map,
+        session_id,
+    }) => {
         const normalizedPoints = normalizeEcgPoints(ecg_points);
         const derivedEcgValue = normalizedPoints
             ? normalizedPoints[normalizedPoints.length - 1]
             : (Number.isFinite(Number(ecg_value)) ? Number(ecg_value) : null);
 
         const result = await db.query(
-            `INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, session_id)
-             VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO health_data
+                (time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
+                 systolic_bp, diastolic_bp, map, session_id)
+             VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING *`,
             [
                 device_id,
@@ -27,6 +40,9 @@ const HealthModel = {
                 temperature,
                 derivedEcgValue,
                 normalizedPoints ? JSON.stringify(normalizedPoints) : null,
+                systolic_bp,
+                diastolic_bp,
+                map,
                 session_id,
             ]
         );
@@ -39,7 +55,8 @@ const HealthModel = {
 
         const result = sinceDate && !Number.isNaN(sinceDate.getTime())
             ? await db.query(
-                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, session_id, is_abnormal, note
+                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
+                        systolic_bp, diastolic_bp, map, session_id, is_abnormal, note
                  FROM health_data
                  WHERE device_id = $1
                    AND time >= $3
@@ -48,7 +65,8 @@ const HealthModel = {
                 [device_id, safeLimit, sinceDate]
             )
             : await db.query(
-                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, session_id, is_abnormal, note
+                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
+                        systolic_bp, diastolic_bp, map, session_id, is_abnormal, note
                  FROM health_data
                  WHERE device_id = $1
                  ORDER BY time DESC
@@ -60,7 +78,8 @@ const HealthModel = {
 
     getBySession: async (session_id) => {
         const result = await db.query(
-            `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, session_id, is_abnormal, note
+            `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
+                    systolic_bp, diastolic_bp, map, session_id, is_abnormal, note
              FROM health_data
              WHERE session_id = $1
              ORDER BY time ASC`,
@@ -69,11 +88,31 @@ const HealthModel = {
         return result.rows;
     },
 
+    getRecentEcgPoints: async (device_id, limit = 8) => {
+        const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(Number(limit), 20)) : 8;
+        const result = await db.query(
+            `SELECT time, ecg_points
+             FROM health_data
+             WHERE device_id = $1
+               AND ecg_points IS NOT NULL
+             ORDER BY time DESC
+             LIMIT $2`,
+            [device_id, safeLimit]
+        );
+
+        return result.rows
+            .reverse()
+            .flatMap((row) => Array.isArray(row.ecg_points) ? row.ecg_points : [])
+            .filter((value) => Number.isFinite(Number(value)))
+            .map((value) => Number(value));
+    },
+
     getAbnormal: async (device_id, since = null) => {
         const sinceDate = since ? new Date(since) : null;
         const result = sinceDate && !Number.isNaN(sinceDate.getTime())
             ? await db.query(
-                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, session_id, is_abnormal, note
+                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
+                        systolic_bp, diastolic_bp, map, session_id, is_abnormal, note
                  FROM health_data
                  WHERE device_id = $1
                    AND is_abnormal = true
@@ -82,7 +121,8 @@ const HealthModel = {
                 [device_id, sinceDate]
             )
             : await db.query(
-                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, session_id, is_abnormal, note
+                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
+                        systolic_bp, diastolic_bp, map, session_id, is_abnormal, note
                  FROM health_data
                  WHERE device_id = $1 AND is_abnormal = true
                  ORDER BY time DESC`,
@@ -117,7 +157,8 @@ const HealthModel = {
 
         const latestResult = hasValidSince
             ? await db.query(
-                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, is_abnormal, note, session_id
+                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
+                        systolic_bp, diastolic_bp, map, is_abnormal, note, session_id
                  FROM health_data
                  WHERE device_id = $1
                    AND time >= $2
@@ -126,7 +167,8 @@ const HealthModel = {
                 [device_id, sinceDate]
             )
             : await db.query(
-                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points, is_abnormal, note, session_id
+                `SELECT time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
+                        systolic_bp, diastolic_bp, map, is_abnormal, note, session_id
                  FROM health_data
                  WHERE device_id = $1
                  ORDER BY time DESC

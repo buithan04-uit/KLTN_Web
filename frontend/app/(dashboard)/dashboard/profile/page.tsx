@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import Image from 'next/image';
 import { useGetProfile, useUpdateProfile, useUploadAvatar } from '@/lib/orval/api';
 import type { GetProfile200, UpdateProfileBody } from '@/lib/orval/api';
@@ -15,6 +15,7 @@ const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const;
 
 // Extended types to include doctor/admin fields not yet in orval-generated types
 type ExtendedProfile = GetProfile200 & {
+  gender?: 'male' | 'female' | 'other' | null;
   specialty?: string | null;
   license_number?: string | null;
   workplace?: string | null;
@@ -23,6 +24,7 @@ type ExtendedProfile = GetProfile200 & {
 };
 
 type ExtendedUpdateBody = UpdateProfileBody & {
+  gender?: 'male' | 'female' | 'other' | '';
   specialty?: string;
   license_number?: string;
   workplace?: string;
@@ -72,6 +74,7 @@ function ProfileForm({ profile, onRefetch }: { profile: ExtendedProfile; onRefet
     first_name: profile.first_name ?? '',
     last_name: profile.last_name ?? '',
     phone: profile.phone ?? '',
+    gender: profile.gender ?? '',
     date_of_birth: normalizeDateForInput(profile.date_of_birth),
     blood_type: (profile.blood_type as UpdateProfileBody['blood_type']) ?? undefined,
     height: profile.height ?? undefined,
@@ -88,24 +91,6 @@ function ProfileForm({ profile, onRefetch }: { profile: ExtendedProfile; onRefet
 
   const set = (key: keyof ExtendedUpdateBody, value: string | number | undefined) =>
     setForm((f) => ({ ...f, [key]: value }));
-
-  useEffect(() => {
-    setForm({
-      first_name: profile.first_name ?? '',
-      last_name: profile.last_name ?? '',
-      phone: profile.phone ?? '',
-      date_of_birth: normalizeDateForInput(profile.date_of_birth),
-      blood_type: (profile.blood_type as UpdateProfileBody['blood_type']) ?? undefined,
-      height: profile.height ?? undefined,
-      weight: profile.weight ?? undefined,
-      underlying_conditions: profile.underlying_conditions ?? '',
-      specialty: profile.specialty ?? '',
-      license_number: profile.license_number ?? '',
-      workplace: profile.workplace ?? '',
-      bio: profile.bio ?? '',
-      department: profile.department ?? '',
-    });
-  }, [profile]);
 
   const updateMutation = useUpdateProfile({
     mutation: {
@@ -171,8 +156,8 @@ function ProfileForm({ profile, onRefetch }: { profile: ExtendedProfile; onRefet
         </Field>
       </div>
 
-      {/* Điện thoại & Ngày sinh */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Điện thoại, Ngày sinh & Giới tính */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Field label="Số điện thoại" icon={Phone}>
           <input
             type="tel"
@@ -189,6 +174,18 @@ function ProfileForm({ profile, onRefetch }: { profile: ExtendedProfile; onRefet
             onChange={(e) => set('date_of_birth', e.target.value)}
             className={inputCls}
           />
+        </Field>
+        <Field label="Giới tính" icon={User}>
+          <select
+            value={form.gender ?? ''}
+            onChange={(e) => set('gender', e.target.value as ExtendedUpdateBody['gender'])}
+            className={inputCls}
+          >
+            <option value="">— Chọn —</option>
+            <option value="male">Nam</option>
+            <option value="female">Nữ</option>
+            <option value="other">Khác</option>
+          </select>
         </Field>
       </div>
 

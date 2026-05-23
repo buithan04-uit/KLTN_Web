@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { Heart, Activity, AlertTriangle, LogOut, User, ChevronRight, Loader2, UserCircle, Cpu, FlaskConical } from 'lucide-react';
+import { Heart, Activity, AlertTriangle, LogOut, User, ChevronRight, Loader2, UserCircle, Cpu, FlaskConical, FileText, BrainCircuit } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
@@ -15,6 +15,8 @@ const navItems = [
   { href: '/dashboard/abnormal', label: 'Cảnh báo', icon: AlertTriangle, roles: ['admin', 'doctor'] as AppRole[] },
   { href: '/dashboard/devices', label: 'Thiết bị của tôi', icon: Cpu, roles: ['patient', 'doctor'] as AppRole[] },
   { href: '/admin/devices', label: 'Quản lý Thiết bị', icon: Cpu, roles: ['admin'] as AppRole[] },
+  { href: '/dashboard/ai-diagnosis', label: 'AI Diagnosis', icon: BrainCircuit, roles: ['patient', 'doctor'] as AppRole[] },
+  { href: '/admin/audit-logs', label: 'Audit Logs', icon: FileText, roles: ['admin'] as AppRole[] },
   { href: '/admin/users', label: 'Quản lý Người dùng', icon: UserCircle, roles: ['admin'] as AppRole[] },
   { href: '/dashboard/privacy', label: 'Privacy Center', icon: UserCircle, roles: ['patient'] as AppRole[] },
   { href: '/dashboard/doctor-monitor', label: 'Doctor Monitor', icon: Heart, roles: ['doctor', 'admin'] as AppRole[] },

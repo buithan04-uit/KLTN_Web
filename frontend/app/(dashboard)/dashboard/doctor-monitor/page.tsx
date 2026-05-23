@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { useQuery } from '@tanstack/react-query';
 import { useGetApiHealthClinicalSummaryDeviceId, useGetApiHealthTrendsDeviceId, useGetApiHealthHistoryDeviceId } from '@/lib/orval/api';
 import { useAuth } from '@/context/AuthContext';
 import { consentApi } from '@/lib/api/consent';
-import { Activity, AlertTriangle, HeartPulse, KeyRound, LayoutGrid, Maximize2, Plus, PlugZap, X } from 'lucide-react';
+import { aiApi, type AiStatus } from '@/lib/api/ai';
+import { Activity, AlertTriangle, BrainCircuit, HeartPulse, KeyRound, LayoutGrid, Maximize2, Plus, PlugZap, X } from 'lucide-react';
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 type RealtimePayload = {
@@ -86,6 +88,13 @@ const VITAL_CONFIG = {
   spo2: { min: 95, max: 100, unit: '%', precision: 1, stroke: '#0ea5e9' },
   temperature: { min: 36.1, max: 37.2, unit: '°C', precision: 1, stroke: '#f59e0b' },
 } as const;
+
+const AI_STATUS_STYLES: Record<AiStatus, { box: string; text: string; badge: string; label: string }> = {
+  normal: { box: 'border-emerald-200 bg-emerald-50', text: 'text-emerald-800', badge: 'bg-emerald-100 text-emerald-700', label: 'On dinh' },
+  warning: { box: 'border-amber-200 bg-amber-50', text: 'text-amber-800', badge: 'bg-amber-100 text-amber-700', label: 'Can theo doi' },
+  danger: { box: 'border-red-200 bg-red-50', text: 'text-red-800', badge: 'bg-red-100 text-red-700', label: 'Can xem xet' },
+  unknown: { box: 'border-slate-200 bg-white', text: 'text-slate-700', badge: 'bg-slate-100 text-slate-600', label: 'Chua du du lieu' },
+};
 
 function getFieldStatus(
   field: keyof typeof VITAL_CONFIG,
@@ -430,6 +439,14 @@ export default function DoctorMonitorPage() {
       },
     }
   );
+
+  const { data: aiSummary, isLoading: isAiSummaryLoading, isError: isAiSummaryError } = useQuery({
+    queryKey: ['doctor-ai-summary', deviceId, consentToken],
+    queryFn: () => aiApi.getSummary(deviceId || '', { limit: 30, consentToken }),
+    enabled: !!deviceId && !!consentToken && !!user && (user.role === 'doctor' || user.role === 'admin'),
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
 
   const trends = useMemo(() => (trendResp?.status === 200 ? trendResp.data : []), [trendResp]);
   const clinical = useMemo(() => (clinicalResp?.status === 200 ? clinicalResp.data : null), [clinicalResp]);
@@ -923,6 +940,66 @@ export default function DoctorMonitorPage() {
           <span className="font-semibold">Clinical Alert:</span> {clinical.ai_summary.clinical_alert}
         </div>
       )}
+
+      <section className={`rounded-2xl border p-5 ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].box}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-white/80 p-2 border border-white">
+              <BrainCircuit className={`w-5 h-5 ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].text}`} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-slate-800">AI chan doan tong hop</h2>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].badge}`}>
+                  {AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].label}
+                </span>
+              </div>
+              <p className={`mt-1 text-sm font-medium ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].text}`}>
+                {isAiSummaryLoading ? 'Dang tong hop du lieu AI...' : isAiSummaryError ? 'Khong the tai tong hop AI' : aiSummary?.headline || 'Chua co ket qua AI'}
+              </p>
+              {aiSummary?.summary && <p className="mt-1 text-sm text-slate-600">{aiSummary.summary}</p>}
+              {aiSummary?.status_reason && <p className="mt-1 text-xs text-slate-500">Ly do: {aiSummary.status_reason}</p>}
+              <p className="mt-1 text-xs text-slate-500">Chi hien thi khi co du lieu doi chieu day du.</p>
+            </div>
+          </div>
+          <div className="text-right text-xs text-slate-500">
+            <div>{aiSummary?.window.sample_count ?? 0} ket qua AI gan nhat</div>
+            {aiSummary?.window.to && <div>Cap nhat {new Date(aiSummary.window.to).toLocaleTimeString('vi-VN')}</div>}
+          </div>
+        </div>
+
+        {aiSummary && Object.keys(aiSummary.models).length > 0 && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+            {Object.entries(aiSummary.models).map(([modelName, model]) => {
+              const styles = AI_STATUS_STYLES[model.status];
+              const confidence = typeof model.latest.confidence === 'number'
+                ? `${Math.round(model.latest.confidence * 100)}%`
+                : 'N/A';
+              return (
+                <div key={modelName} className="rounded-xl border border-white/80 bg-white/80 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-700">
+                      {modelName === 'vitals-risk' ? 'Sinh hieu tong hop' : modelName === 'ecg-arrhythmia' ? 'ECG arrhythmia' : modelName}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}>{styles.label}</span>
+                  </div>
+                  <div className="mt-2 flex items-end gap-2">
+                    <span className={`text-xl font-bold ${styles.text}`}>{model.latest.prediction_label}</span>
+                    <span className="text-xs text-slate-500 mb-1">confidence {confidence}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">Ket qua de bac si tham khao, khong phai canh bao tung mau realtime.</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="mt-4 text-xs text-slate-500">
+          {aiSummary?.disclaimer || 'AI chi ho tro tham khao, can doi chieu voi lam sang va du lieu do thuc te.'}
+        </p>
+        <a href="/dashboard/ai-diagnosis" className="mt-3 inline-flex text-sm font-semibold text-sky-700 hover:text-sky-800">
+          Xem lich su AI va du lieu dau vao
+        </a>
+      </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-slate-800 mb-3">Biểu đồ realtime / xu hướng</h2>

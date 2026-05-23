@@ -10,7 +10,7 @@ BEGIN;
 
 -- 1) Users (including v2 profile fields: first_name/last_name, patient-health, doctor-pro, admin-dept)
 INSERT INTO users (
-  email, password, role, full_name, phone, is_active, is_verified,
+  email, password, role, full_name, phone, gender, is_active, is_verified,
   first_name, last_name, date_of_birth,
   blood_type, height, weight, underlying_conditions,
   specialty, license_number, workplace, bio,
@@ -20,7 +20,7 @@ VALUES
   (
     'admin01@telehealth.test',
     '$2b$10$0nm5liRaod/WAcIck38IMuWboA5c4AVklr3Lisfp.TCjpCHSrywea',
-    'admin', 'System Admin', '0900000001', true, true,
+    'admin', 'System Admin', '0900000001', 'other', true, true,
     'System', 'Admin', NULL,
     NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, 'Quản trị viên hệ thống TeleHealth.',
@@ -29,7 +29,7 @@ VALUES
   (
     'doctor01@telehealth.test',
     '$2b$10$w9ZPqSzxk6gmwuIGMjnUXO.tf..lqe1furR0GZGPsT38.Ay2C9XEy',
-    'doctor', 'Doctor One', '0900000002', true, true,
+    'doctor', 'Doctor One', '0900000002', 'male', true, true,
     'Nguyễn Văn', 'Bác Sĩ', '1980-05-15',
     NULL, NULL, NULL, NULL,
     'Tim mạch', '001234/BYT-CCHN', 'Bệnh viện Bạch Mai', 'Chuyên gia tim mạch với 15 năm kinh nghiệm.',
@@ -38,7 +38,7 @@ VALUES
   (
     'doctor02@telehealth.test',
     '$2b$10$w9ZPqSzxk6gmwuIGMjnUXO.tf..lqe1furR0GZGPsT38.Ay2C9XEy',
-    'doctor', 'Doctor Two', '0900000003', true, true,
+    'doctor', 'Doctor Two', '0900000003', 'female', true, true,
     'Trần Thị', 'Y Khoa', '1985-08-20',
     NULL, NULL, NULL, NULL,
     'Nội tâm mạch', '005678/BYT-CCHN', 'Bệnh viện Chợ Rẫy', 'Bác sĩ nội trú chuyên nội tâm mạch.',
@@ -47,7 +47,7 @@ VALUES
   (
     'patient01@telehealth.test',
     '$2b$10$9UYOWuQD790TY0RTJIFaIu06a6RBUL5uZOM3t3lXmVuL9JIoosJmO',
-    'patient', 'Patient One', '0900000004', true, true,
+    'patient', 'Patient One', '0900000004', 'male', true, true,
     'Lê Văn', 'Bệnh Nhân', '1990-03-10',
     'A+', 170.5, 68.0, 'Tiểu đường type 2, Huyết áp cao',
     NULL, NULL, NULL, NULL,
@@ -56,7 +56,7 @@ VALUES
   (
     'patient02@telehealth.test',
     '$2b$10$9UYOWuQD790TY0RTJIFaIu06a6RBUL5uZOM3t3lXmVuL9JIoosJmO',
-    'patient', 'Patient Two', '0900000005', true, true,
+    'patient', 'Patient Two', '0900000005', 'female', true, true,
     'Phạm Thị', 'Hai', '1995-11-25',
     'O-', 162.0, 55.5, 'Hen suyễn nhẹ',
     NULL, NULL, NULL, NULL,
@@ -66,7 +66,7 @@ VALUES
   (
     'patient03@telehealth.test',
     '$2b$10$w9ZPqSzxk6gmwuIGMjnUXO.tf..lqe1furR0GZGPsT38.Ay2C9XEy',
-    'patient', 'Patient Three', '0900000006', true, true,
+    'patient', 'Patient Three', '0900000006', 'female', true, true,
     'Nguyễn Thị', 'Ba', '1988-07-22',
     'B+', 165.0, 60.0, 'Tiểu đường type 1',
     NULL, NULL, NULL, NULL,
@@ -76,7 +76,7 @@ VALUES
   (
     'patient04@telehealth.test',
     '$2b$10$w9ZPqSzxk6gmwuIGMjnUXO.tf..lqe1furR0GZGPsT38.Ay2C9XEy',
-    'patient', 'Patient Four', '0900000007', false, true,
+    'patient', 'Patient Four', '0900000007', 'male', false, true,
     'Hoàng Văn', 'Bốn', '2000-01-15',
     'AB+', 175.0, 72.0, NULL,
     NULL, NULL, NULL, NULL,
@@ -86,7 +86,7 @@ VALUES
   (
     'doctor03@telehealth.test',
     '$2b$10$w9ZPqSzxk6gmwuIGMjnUXO.tf..lqe1furR0GZGPsT38.Ay2C9XEy',
-    'doctor', 'Doctor Three', '0900000008', true, true,
+    'doctor', 'Doctor Three', '0900000008', 'female', true, true,
     'Lê Thị', 'Ba', '1978-09-10',
     NULL, NULL, NULL, NULL,
     'Nội khoa', '009012/BYT-CCHN', 'Bệnh viện Việt Đức', 'Bác sĩ nội khoa.',
@@ -98,6 +98,7 @@ DO UPDATE SET
   role = EXCLUDED.role,
   full_name = EXCLUDED.full_name,
   phone = EXCLUDED.phone,
+  gender = EXCLUDED.gender,
   is_active = EXCLUDED.is_active,
   is_verified = EXCLUDED.is_verified,
   first_name = EXCLUDED.first_name,
@@ -150,7 +151,7 @@ DELETE FROM health_data
 WHERE device_id IN ('DEV_01', 'DEV_02', 'DEV_03', 'DEV_05', 'DEV_06')
   AND note = 'seed.full-test-data';
 
-INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, session_id, is_abnormal, note)
+INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, systolic_bp, diastolic_bp, map, session_id, is_abnormal, note)
 SELECT
   ts,
   device_id,
@@ -158,6 +159,9 @@ SELECT
   spo2,
   temp,
   ecg,
+  120,
+  80,
+  93.3,
   session_uuid,
   (hr < 55 OR hr > 120 OR spo2 < 93 OR temp > 38.2) AS is_abnormal,
   'seed.full-test-data' AS note
@@ -190,7 +194,7 @@ FROM (
 ) x;
 
 -- 3b) DEV_01: critical alarm scenario — last 30 min with dangerous vitals
-INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, session_id, is_abnormal, note)
+INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, systolic_bp, diastolic_bp, map, session_id, is_abnormal, note)
 SELECT
   gs AS time,
   'DEV_01' AS device_id,
@@ -198,13 +202,16 @@ SELECT
   ROUND((88 + 4 * ABS(SIN(EXTRACT(EPOCH FROM gs) / 120)))::numeric, 1) AS spo2,
   ROUND((39.4 + 0.6 * ABS(SIN(EXTRACT(EPOCH FROM gs) / 200)))::numeric, 2) AS temperature,
   ROUND((1.2 * SIN(EXTRACT(EPOCH FROM gs) / 12))::numeric, 4) AS ecg_value,
+  145 AS systolic_bp,
+  95 AS diastolic_bp,
+  111.7 AS map,
   '11111111-1111-1111-1111-111111111111'::uuid AS session_id,
   true AS is_abnormal,
   'seed.full-test-data' AS note
 FROM generate_series(NOW() - INTERVAL '30 minutes', NOW(), INTERVAL '2 minutes') AS gs;
 
 -- 3c) DEV_05: historical data from 7 to 5 days ago (patient offline since) — normal values
-INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, session_id, is_abnormal, note)
+INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, systolic_bp, diastolic_bp, map, session_id, is_abnormal, note)
 SELECT
   gs AS time,
   'DEV_05' AS device_id,
@@ -212,13 +219,16 @@ SELECT
   ROUND((97 - ABS(SIN(EXTRACT(EPOCH FROM gs) / 2400)))::numeric, 1) AS spo2,
   ROUND((36.6 + 0.5 * ABS(SIN(EXTRACT(EPOCH FROM gs) / 2800)))::numeric, 2) AS temperature,
   ROUND((0.85 * SIN(EXTRACT(EPOCH FROM gs) / 12))::numeric, 4) AS ecg_value,
+  118 AS systolic_bp,
+  76 AS diastolic_bp,
+  90 AS map,
   NULL AS session_id,
   false AS is_abnormal,
   'seed.full-test-data' AS note
 FROM generate_series(NOW() - INTERVAL '7 days', NOW() - INTERVAL '5 days', INTERVAL '10 minutes') AS gs;
 
 -- 3d) DEV_06: data from 4 hours ago to 2 hours ago (went offline after) — mostly normal
-INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, session_id, is_abnormal, note)
+INSERT INTO health_data (time, device_id, heart_rate, spo2, temperature, ecg_value, systolic_bp, diastolic_bp, map, session_id, is_abnormal, note)
 SELECT
   gs AS time,
   'DEV_06' AS device_id,
@@ -226,6 +236,9 @@ SELECT
   ROUND((97 - ABS(1.5 * SIN(EXTRACT(EPOCH FROM gs) / 2200)))::numeric, 1) AS spo2,
   ROUND((36.8 + 0.4 * ABS(SIN(EXTRACT(EPOCH FROM gs) / 2600)))::numeric, 2) AS temperature,
   ROUND((0.9 * SIN(EXTRACT(EPOCH FROM gs) / 12))::numeric, 4) AS ecg_value,
+  122 AS systolic_bp,
+  78 AS diastolic_bp,
+  92.7 AS map,
   'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid AS session_id,
   false AS is_abnormal,
   'seed.full-test-data' AS note
