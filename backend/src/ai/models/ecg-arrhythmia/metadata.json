@@ -11,22 +11,22 @@
     {
       "id": 0,
       "code": "N",
-      "label": "Normal beat"
+      "label": "Nhịp tim bình thường"
     },
     {
       "id": 1,
       "code": "S",
-      "label": "Supraventricular ectopic beat"
+      "label": "Ngoại tâm thu trên thất"
     },
     {
       "id": 2,
       "code": "V",
-      "label": "Ventricular ectopic beat"
+      "label": "Ngoại tâm thu thất"
     },
     {
       "id": 3,
       "code": "F",
-      "label": "Fusion beat"
+      "label": "Nhịp hợp nhất"
     }
   ]
 }

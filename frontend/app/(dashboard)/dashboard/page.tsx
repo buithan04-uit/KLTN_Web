@@ -253,19 +253,63 @@ function RecordsTable({ records }: { records: HealthRecord[] }) {
 
 // ─── Main Dashboard ────────────────────────────────────────────────────────────
 const AI_STATUS_STYLES: Record<AiStatus, { box: string; text: string; badge: string; dot: string; label: string }> = {
-  normal: { box: 'border-emerald-200 bg-emerald-50', text: 'text-emerald-800', badge: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', label: 'On dinh' },
-  warning: { box: 'border-amber-200 bg-amber-50', text: 'text-amber-800', badge: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', label: 'Can theo doi' },
-  danger: { box: 'border-red-200 bg-red-50', text: 'text-red-800', badge: 'bg-red-100 text-red-700', dot: 'bg-red-500', label: 'Can bac si xem xet' },
-  unknown: { box: 'border-slate-200 bg-white', text: 'text-slate-700', badge: 'bg-slate-100 text-slate-600', dot: 'bg-slate-300', label: 'Chua du du lieu' },
+  normal: { box: 'border-emerald-200 bg-emerald-50', text: 'text-emerald-800', badge: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', label: 'Ổn định' },
+  warning: { box: 'border-amber-200 bg-amber-50', text: 'text-amber-800', badge: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', label: 'Cần theo dõi' },
+  danger: { box: 'border-red-200 bg-red-50', text: 'text-red-800', badge: 'bg-red-100 text-red-700', dot: 'bg-red-500', label: 'Cần bác sĩ xem xét' },
+  unknown: { box: 'border-slate-200 bg-white', text: 'text-slate-700', badge: 'bg-slate-100 text-slate-600', dot: 'bg-slate-300', label: 'Chưa đủ dữ liệu' },
+};
+
+const ECG_LABELS: Record<string, string> = {
+  N: 'Nhịp tim bình thường',
+  S: 'Ngoại tâm thu trên thất',
+  V: 'Ngoại tâm thu thất',
+  F: 'Nhịp hợp nhất',
+  Q: 'Khác/không rõ',
+};
+
+function getReadableAiLabel(modelName: string, label: string) {
+  if (modelName === 'ecg-arrhythmia') {
+    return ECG_LABELS[label] ? `${label} - ${ECG_LABELS[label]}` : label;
+  }
+  if (modelName === 'vitals-risk') {
+    if (/low/i.test(label)) return 'Low Risk - Ổn định';
+    if (/high/i.test(label)) return 'High Risk - Nguy cơ cao';
+  }
+  return label;
+}
+
+function normalizeModelStatus(modelName: string, label: string, status: AiStatus): AiStatus {
+  if (modelName === 'vitals-risk') {
+    if (/low|normal/i.test(label)) return 'normal';
+    if (/high|danger/i.test(label)) return 'danger';
+  }
+  return status;
+}
+
+const formatAiConfidence = (value: number | null | undefined) => {
+  if (typeof value !== 'number') return 'N/A';
+  const pct = value * 100;
+  if (pct >= 99.5 && pct < 100) return '>=99.5%';
+  return `${pct.toFixed(1)}%`;
 };
 
 function AiSummaryPanel({ summary, loading, error }: { summary?: AiSummary; loading: boolean; error: string }) {
   const status = summary?.overall_status ?? 'unknown';
   const styles = AI_STATUS_STYLES[status];
   const models = summary ? Object.entries(summary.models) : [];
+  const vitalsModel = summary?.models['vitals-risk'];
+  const ecgModel = summary?.models['ecg-arrhythmia'];
+  const vitalsStatus = vitalsModel
+    ? normalizeModelStatus('vitals-risk', vitalsModel.latest.prediction_label, vitalsModel.status)
+    : undefined;
+  const ecgStatus = ecgModel
+    ? normalizeModelStatus('ecg-arrhythmia', ecgModel.latest.prediction_label, ecgModel.status)
+    : undefined;
+  const hasEcgInput = Boolean(ecgModel && ecgModel.sample_count > 0 && ecgStatus !== 'unknown');
+  const hasImportantAlert = status === 'danger' || status === 'warning';
 
   return (
-    <div className={`rounded-2xl border p-5 shadow-sm ${styles.box}`}>
+    <div className={`rounded-2xl border p-5 shadow-sm ${hasImportantAlert ? styles.box : 'border-slate-200 bg-white'}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <div className="rounded-xl bg-white/80 p-2 border border-white">
@@ -273,49 +317,97 @@ function AiSummaryPanel({ summary, loading, error }: { summary?: AiSummary; load
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-semibold text-slate-900">Tong hop AI chan doan</h2>
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${styles.badge}`}>
-                <span className={`w-2 h-2 rounded-full ${styles.dot}`} />
-                {styles.label}
-              </span>
+              <h2 className="text-base font-semibold text-slate-900">AI theo dõi</h2>
+              {hasImportantAlert && (
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${styles.badge}`}>
+                  <span className={`w-2 h-2 rounded-full ${styles.dot}`} />
+                  {styles.label}
+                </span>
+              )}
             </div>
             <p className={`mt-1 text-sm font-medium ${styles.text}`}>
-              {loading ? 'Dang tong hop du lieu gan day...' : error || summary?.headline || 'Chua co ket qua AI'}
+              {loading
+                ? 'Đang tổng hợp dữ liệu gần đây...'
+                : error || (hasImportantAlert ? summary?.headline : 'Sinh hiệu đang ổn định. ECG chỉ hiển thị khi có dữ liệu đủ điều kiện.')}
             </p>
-            {summary?.summary && <p className="mt-1 text-sm text-slate-600">{summary.summary}</p>}
-            {summary?.status_reason && <p className="mt-1 text-xs text-slate-500">Ly do: {summary.status_reason}</p>}
-            <p className="mt-1 text-xs text-slate-500">Chi hien thi khi co du lieu doi chieu day du.</p>
+            {hasImportantAlert && summary?.summary && <p className="mt-1 text-sm text-slate-600">{summary.summary}</p>}
+            {hasImportantAlert && summary?.status_reason && <p className="mt-1 text-xs text-slate-500">Lý do: {summary.status_reason}</p>}
           </div>
         </div>
         <div className="text-right text-xs text-slate-500">
-          <div>{summary?.window.sample_count ?? 0} ket qua AI gan nhat</div>
-          {summary?.window.to && <div>Cap nhat {new Date(summary.window.to).toLocaleTimeString('vi-VN')}</div>}
+          <div>{summary?.window.sample_count ?? 0} kết quả AI gần nhất</div>
+          {summary?.window.to && <div>Cập nhật {new Date(summary.window.to).toLocaleTimeString('vi-VN')}</div>}
         </div>
       </div>
 
       {models.length > 0 && (
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-          {models.map(([modelName, model]) => {
+          {vitalsModel && (() => {
+            const modelStyles = AI_STATUS_STYLES[vitalsStatus ?? vitalsModel.status];
+            return (
+            <div className={`rounded-xl border p-3 ${modelStyles.box}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-slate-700">Sinh hiệu tổng hợp</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${modelStyles.badge}`}>
+                  {modelStyles.label}
+                </span>
+              </div>
+              <div className="mt-2 flex items-end gap-2">
+                <span className={`text-lg font-bold ${modelStyles.text}`}>
+                  {getReadableAiLabel('vitals-risk', vitalsModel.latest.prediction_label)}
+                </span>
+                <span className="text-xs text-slate-500 mb-0.5">
+                  xác suất {formatAiConfidence(vitalsModel.latest.confidence)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Theo dõi nhỏ gọn khi ổn định; chỉ cảnh báo khi sinh hiệu bất thường rõ.
+              </p>
+            </div>
+            );
+          })()}
+          {hasEcgInput && ecgModel && (() => {
+            const modelStyles = AI_STATUS_STYLES[ecgStatus ?? ecgModel.status];
+            return (
+              <div className="rounded-xl border border-white/80 bg-white/80 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-slate-700">Điện tim ECG</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${modelStyles.badge}`}>
+                    {modelStyles.label}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-end gap-2">
+                  <span className={`text-lg font-bold ${modelStyles.text}`}>
+                    {getReadableAiLabel('ecg-arrhythmia', ecgModel.latest.prediction_label)}
+                  </span>
+                  <span className="text-xs text-slate-500 mb-1">
+                    xác suất {formatAiConfidence(ecgModel.latest.confidence)}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Tổng hợp {ecgModel.sample_count} kết quả ECG đủ điều kiện trong cửa sổ hiện tại.
+                </p>
+              </div>
+            );
+          })()}
+          {!vitalsModel && !hasEcgInput && models.map(([modelName, model]) => {
             const modelStyles = AI_STATUS_STYLES[model.status];
-            const confidence = typeof model.latest.confidence === 'number'
-              ? `${Math.round(model.latest.confidence * 100)}%`
-              : 'N/A';
             return (
               <div key={modelName} className="rounded-xl border border-white/80 bg-white/80 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-semibold text-slate-700">
-                    {modelName === 'vitals-risk' ? 'Sinh hieu tong hop' : modelName === 'ecg-arrhythmia' ? 'ECG arrhythmia' : modelName}
+                    {modelName === 'vitals-risk' ? 'Sinh hiệu tổng hợp' : modelName === 'ecg-arrhythmia' ? 'Điện tim ECG' : modelName}
                   </span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${modelStyles.badge}`}>
                     {modelStyles.label}
                   </span>
                 </div>
                 <div className="mt-2 flex items-end gap-2">
-                  <span className={`text-xl font-bold ${modelStyles.text}`}>{model.latest.prediction_label}</span>
-                  <span className="text-xs text-slate-500 mb-1">confidence {confidence}</span>
+                  <span className={`text-xl font-bold ${modelStyles.text}`}>{getReadableAiLabel(modelName, model.latest.prediction_label)}</span>
+                  <span className="text-xs text-slate-500 mb-1">xác suất {formatAiConfidence(model.latest.confidence)}</span>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">
-                  Tong hop {model.sample_count} ket qua trong cua so du lieu hien tai.
+                  Tổng hợp {model.sample_count} kết quả trong cửa sổ dữ liệu hiện tại.
                 </p>
               </div>
             );
@@ -324,10 +416,10 @@ function AiSummaryPanel({ summary, loading, error }: { summary?: AiSummary; load
       )}
 
       <p className="mt-4 text-xs text-slate-500">
-        {summary?.disclaimer || 'AI chi ho tro tham khao trong qua trinh theo doi, khong thay the chan doan cua bac si.'}
+        {summary?.disclaimer || 'AI chỉ hỗ trợ tham khảo trong quá trình theo dõi, không thay thế chẩn đoán của bác sĩ.'}
       </p>
       <a href="/dashboard/ai-diagnosis" className="mt-3 inline-flex text-sm font-semibold text-sky-700 hover:text-sky-800">
-        Xem lai ket qua va du lieu doi chieu
+        Xem lại kết quả và dữ liệu đối chiếu
       </a>
     </div>
   );
@@ -597,7 +689,7 @@ export default function DashboardPage() {
           isAiSummaryError
             ? aiSummaryQueryError instanceof Error
               ? aiSummaryQueryError.message
-              : 'Khong the tai tong hop AI'
+              : 'Không thể tải tổng hợp AI'
             : ''
         }
       />

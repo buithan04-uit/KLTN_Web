@@ -7,7 +7,7 @@ const UserModel = require('../models/user.model');
 const canAccessDevice = async (req, deviceId) => {
     const device = await DeviceModel.findById(deviceId);
     if (!device) {
-        return { ok: false, status: 404, error: 'Khong tim thay thiet bi' };
+        return { ok: false, status: 404, error: 'Không tìm thấy thiết bị' };
     }
 
     if (req.user.role === 'admin') {
@@ -18,11 +18,11 @@ const canAccessDevice = async (req, deviceId) => {
         if (Number(device.owner_id) === Number(req.user.id)) {
             return { ok: true, device };
         }
-        return { ok: false, status: 403, error: 'Ban khong co quyen xem chan doan AI cua thiet bi nay' };
+        return { ok: false, status: 403, error: 'Bạn không có quyền xem chẩn đoán AI của thiết bị này' };
     }
 
     if (req.user.role !== 'doctor') {
-        return { ok: false, status: 403, error: 'Khong co quyen truy cap chan doan AI' };
+        return { ok: false, status: 403, error: 'Không có quyền truy cập chẩn đoán AI' };
     }
 
     return { ok: true, device };
@@ -30,14 +30,18 @@ const canAccessDevice = async (req, deviceId) => {
 
 const normalizeLabel = (value) => String(value || '').trim();
 
-const getPredictionStatus = (modelName, label) => {
+const getPredictionStatus = (modelName, label, confidence = null) => {
     const normalized = normalizeLabel(label);
     const lower = normalized.toLowerCase();
+    const conf = Number(confidence);
+    const hasConfidence = Number.isFinite(conf);
 
     if (!normalized) return 'unknown';
 
     if (modelName === 'vitals-risk') {
-        if (lower.includes('high') || lower.includes('danger') || lower.includes('risk cao')) return 'danger';
+        if (lower.includes('high') || lower.includes('danger') || lower.includes('risk cao')) {
+            return !hasConfidence || conf >= 0.75 ? 'danger' : 'warning';
+        }
         if (lower.includes('medium') || lower.includes('moderate') || lower.includes('risk trung')) return 'warning';
         if (lower.includes('low') || lower.includes('normal')) return 'normal';
         return 'warning';
@@ -45,8 +49,11 @@ const getPredictionStatus = (modelName, label) => {
 
     if (modelName === 'ecg-arrhythmia') {
         if (normalized === 'N' || lower.includes('normal')) return 'normal';
-        if (['V', 'F'].includes(normalized)) return 'danger';
-        if (['S', 'Q'].includes(normalized)) return 'warning';
+        if (['V', 'F'].includes(normalized)) {
+            if (hasConfidence && conf < 0.6) return 'unknown';
+            return !hasConfidence || conf >= 0.8 ? 'danger' : 'warning';
+        }
+        if (['S', 'Q'].includes(normalized)) return hasConfidence && conf < 0.6 ? 'unknown' : 'warning';
         return 'warning';
     }
 
@@ -68,7 +75,7 @@ const statusFromDistribution = ({ danger = 0, warning = 0, total = 0 }) => {
     if (!total) {
         return {
             status: 'unknown',
-            reason: 'Chua co ket qua du doan hop le trong cua so du lieu',
+            reason: 'Chưa có kết quả dự đoán hợp lệ trong cửa sổ dữ liệu',
         };
     }
 
@@ -78,20 +85,20 @@ const statusFromDistribution = ({ danger = 0, warning = 0, total = 0 }) => {
     if (danger >= 3 || dangerRatio >= 0.35) {
         return {
             status: 'danger',
-            reason: `${danger}/${total} ket qua gan day o muc can chu y cao`,
+            reason: `${danger}/${total} kết quả gần đây ở mức cần chú ý cao`,
         };
     }
 
     if (danger >= 1 || abnormalRatio >= 0.3) {
         return {
             status: 'warning',
-            reason: `${danger + warning}/${total} ket qua gan day co dau hieu can theo doi`,
+            reason: `${danger + warning}/${total} kết quả gần đây có dấu hiệu cần theo dõi`,
         };
     }
 
     return {
         status: 'normal',
-        reason: `Da so ${total} ket qua gan day trong nguong on dinh`,
+        reason: `Đa số ${total} kết quả gần đây trong ngưỡng ổn định`,
     };
 };
 
@@ -114,7 +121,7 @@ const buildAiSummary = (predictions, limit) => {
 
         const model = models[modelName];
         const label = normalizeLabel(row.prediction_label) || 'Unknown';
-        const status = getPredictionStatus(modelName, label);
+        const status = getPredictionStatus(modelName, label, row.confidence);
         model.counts[label] = (model.counts[label] || 0) + 1;
         model.status_counts[status] = (model.status_counts[status] || 0) + 1;
         model.sample_count += 1;
@@ -144,17 +151,17 @@ const buildAiSummary = (predictions, limit) => {
         .sort();
 
     const headlineByStatus = {
-        danger: 'Can chu y: AI phat hien dau hieu bat thuong trong cua so du lieu gan day',
-        warning: 'Theo doi them: AI ghi nhan mot so dau hieu can bac si xem xet',
-        normal: 'On dinh: AI chua ghi nhan dau hieu bat thuong ro trong cua so du lieu gan day',
-        unknown: 'Chua du du lieu de tong hop chan doan AI',
+        danger: 'Cần chú ý: AI phát hiện dấu hiệu bất thường trong cửa sổ dữ liệu gần đây',
+        warning: 'Theo dõi thêm: AI ghi nhận một số dấu hiệu cần bác sĩ xem xét',
+        normal: 'Ổn định: AI chưa ghi nhận dấu hiệu bất thường rõ trong cửa sổ dữ liệu gần đây',
+        unknown: 'Chưa đủ dữ liệu để tổng hợp chẩn đoán AI',
     };
 
     const summaryByStatus = {
-        danger: 'Ket qua nay duoc tong hop tu nhieu phien du lieu gan day, khong phai canh bao tuc thoi tung mau.',
-        warning: 'Nen doi chieu voi trieu chung, tien su benh va du lieu do thuc te truoc khi dua ra ket luan.',
-        normal: 'Tiep tuc theo doi dinh ky; ket qua AI chi co gia tri tham khao.',
-        unknown: 'Can them du lieu sinh hieu/ECG hop le de AI co the danh gia.',
+        danger: 'Kết quả này được tổng hợp từ nhiều phiên dữ liệu gần đây, không phải cảnh báo tức thời từng mẫu.',
+        warning: 'Nên đối chiếu với triệu chứng, tiền sử bệnh và dữ liệu đo thực tế trước khi đưa ra kết luận.',
+        normal: 'Tiếp tục theo dõi định kỳ; kết quả AI chỉ có giá trị tham khảo.',
+        unknown: 'Cần thêm dữ liệu sinh hiệu/ECG hợp lệ để AI có thể đánh giá.',
     };
 
     return {
@@ -191,7 +198,7 @@ const predictLatest = async (req, res) => {
         const rows = await HealthModel.getHistory(deviceId, 1, req.user.role === 'doctor' ? req.consentSession?.issued_at : null);
         const latest = rows[0] || null;
         if (!latest) {
-            return res.status(404).json({ error: 'Chua co du lieu suc khoe cho thiet bi nay' });
+            return res.status(404).json({ error: 'Chưa có dữ liệu sức khỏe cho thiết bị này' });
         }
 
         let healthRecordForAi = latest;

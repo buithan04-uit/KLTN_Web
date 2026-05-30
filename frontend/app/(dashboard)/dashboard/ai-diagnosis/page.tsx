@@ -19,50 +19,58 @@ type SessionEntry = {
 };
 
 const STATUS_STYLES: Record<AiStatus, { label: string; badge: string; panel: string; icon: typeof CheckCircle2 }> = {
-  normal: { label: 'On dinh', badge: 'bg-emerald-100 text-emerald-700', panel: 'border-emerald-200 bg-emerald-50', icon: CheckCircle2 },
-  warning: { label: 'Can theo doi', badge: 'bg-amber-100 text-amber-700', panel: 'border-amber-200 bg-amber-50', icon: AlertTriangle },
-  danger: { label: 'Can bac si xem xet', badge: 'bg-red-100 text-red-700', panel: 'border-red-200 bg-red-50', icon: AlertTriangle },
-  unknown: { label: 'Chua ro', badge: 'bg-slate-100 text-slate-600', panel: 'border-slate-200 bg-white', icon: FileSearch },
+  normal: { label: 'Ổn định', badge: 'bg-emerald-100 text-emerald-700', panel: 'border-emerald-200 bg-emerald-50', icon: CheckCircle2 },
+  warning: { label: 'Cần theo dõi', badge: 'bg-amber-100 text-amber-700', panel: 'border-amber-200 bg-amber-50', icon: AlertTriangle },
+  danger: { label: 'Cần bác sĩ xem xét', badge: 'bg-red-100 text-red-700', panel: 'border-red-200 bg-red-50', icon: AlertTriangle },
+  unknown: { label: 'Chưa rõ', badge: 'bg-slate-100 text-slate-600', panel: 'border-slate-200 bg-white', icon: FileSearch },
 };
 
-function getStatus(modelName: string, label: string | null | undefined): AiStatus {
+function getStatus(modelName: string, label: string | null | undefined, confidence?: number | null): AiStatus {
   const value = String(label || '').trim();
   const lower = value.toLowerCase();
+  const hasConfidence = typeof confidence === 'number';
   if (!value) return 'unknown';
   if (modelName === 'vitals-risk') {
-    if (lower.includes('high') || lower.includes('danger')) return 'danger';
+    if (lower.includes('high') || lower.includes('danger')) {
+      return !hasConfidence || confidence >= 0.75 ? 'danger' : 'warning';
+    }
     if (lower.includes('medium') || lower.includes('moderate')) return 'warning';
     if (lower.includes('low') || lower.includes('normal')) return 'normal';
     return 'warning';
   }
   if (modelName === 'ecg-arrhythmia') {
     if (value === 'N' || lower.includes('normal')) return 'normal';
-    if (value === 'V' || value === 'F') return 'danger';
-    return 'warning';
+    if (value === 'V' || value === 'F') {
+      if (hasConfidence && confidence < 0.6) return 'unknown';
+      return !hasConfidence || confidence >= 0.8 ? 'danger' : 'warning';
+    }
+    return hasConfidence && confidence < 0.6 ? 'unknown' : 'warning';
   }
   return 'unknown';
 }
 
 function getModelLabel(modelName: string) {
-  if (modelName === 'vitals-risk') return 'Sinh hieu tong hop';
-  if (modelName === 'ecg-arrhythmia') return 'Dien tim ECG';
+  if (modelName === 'vitals-risk') return 'Sinh hiệu tổng hợp';
+  if (modelName === 'ecg-arrhythmia') return 'Điện tim ECG';
   return modelName;
 }
 
 function getReadableDiagnosis(row: AiPredictionRow) {
   if (row.model_name === 'vitals-risk') {
-    if (/high/i.test(row.prediction_label)) return 'Nguy co cao theo sinh hieu';
-    if (/low/i.test(row.prediction_label)) return 'Nguy co thap theo sinh hieu';
+    if (/high/i.test(row.prediction_label)) return 'High Risk - Nguy cơ cao theo sinh hiệu';
+    if (/low/i.test(row.prediction_label)) return 'Low Risk - Ổn định theo sinh hiệu';
   }
   if (row.model_name === 'ecg-arrhythmia') {
     const map: Record<string, string> = {
-      N: 'Nhip tim binh thuong',
-      S: 'Nghi ngoai tam thu tren that',
-      V: 'Nghi ngoai tam thu that',
-      F: 'Nghi nhip hop nhat',
-      Q: 'Khac/khong phan loai ro',
+      N: 'Nhịp tim bình thường',
+      S: 'Nghi ngoại tâm thu trên thất',
+      V: 'Nghi ngoại tâm thu thất',
+      F: 'Nghi nhịp hợp nhất',
+      Q: 'Khác/không phân loại rõ',
     };
-    return map[row.prediction_label] || row.prediction_label;
+    return map[row.prediction_label]
+      ? `${row.prediction_label} - ${map[row.prediction_label]}`
+      : row.prediction_label;
   }
   return row.prediction_label;
 }
@@ -93,20 +101,20 @@ function EvidenceGrid({ row }: { row: AiPredictionRow }) {
   const facts = [
     ['HR', fmt(raw.heart_rate ?? raw.hr, ' bpm')],
     ['SpO2', fmt(raw.spo2, '%')],
-    ['Nhiet do', fmt(raw.temperature ?? raw.temp, ' C')],
-    ['Huyet ap', raw.systolic_bp || raw.diastolic_bp ? `${fmt(raw.systolic_bp)}/${fmt(raw.diastolic_bp)} mmHg` : '--'],
+    ['Nhiệt độ', fmt(raw.temperature ?? raw.temp, ' C')],
+    ['Huyết áp', raw.systolic_bp || raw.diastolic_bp ? `${fmt(raw.systolic_bp)}/${fmt(raw.diastolic_bp)} mmHg` : '--'],
     ['MAP', fmt(raw.map, ' mmHg')],
-    ['Tuoi/Gioi', `${fmt(raw.age)} / ${fmt(raw.gender)}`],
+    ['Tuổi/Giới', `${fmt(raw.age)} / ${fmt(raw.gender)}`],
   ];
 
   if (row.model_name === 'ecg-arrhythmia') {
     const windowSize = raw.window_size ?? raw.ecg_points_count;
-    facts.push(['ECG window', `${fmt(windowSize)} diem`]);
+    facts.push(['Cửa sổ ECG', `${fmt(windowSize)} điểm`]);
     if (raw.ecg_quality !== null && raw.ecg_quality !== undefined && raw.ecg_quality !== '') {
-      facts.push(['Chat luong ECG', String(raw.ecg_quality)]);
+      facts.push(['Chất lượng ECG', String(raw.ecg_quality)]);
     }
     if (raw.sampling_rate !== null && raw.sampling_rate !== undefined) {
-      facts.push(['Tan so lay mau', fmt(raw.sampling_rate, ' Hz')]);
+      facts.push(['Tần số lấy mẫu', fmt(raw.sampling_rate, ' Hz')]);
     }
   }
 
@@ -130,7 +138,7 @@ function formatModelProbability(confidence: number | null) {
 }
 
 function PredictionCard({ row }: { row: AiPredictionRow }) {
-  const status = getStatus(row.model_name, row.prediction_label);
+  const status = getStatus(row.model_name, row.prediction_label, row.confidence);
   const style = STATUS_STYLES[status];
   const Icon = style.icon;
   const confidence = formatModelProbability(row.confidence);
@@ -148,7 +156,7 @@ function PredictionCard({ row }: { row: AiPredictionRow }) {
               <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${style.badge}`}>{style.label}</span>
             </div>
             <p className="mt-1 text-sm text-slate-600">
-              {getModelLabel(row.model_name)} | Xac suat mo hinh {confidence}
+              {getModelLabel(row.model_name)} | Xác suất mô hình {confidence}
             </p>
           </div>
         </div>
@@ -161,7 +169,7 @@ function PredictionCard({ row }: { row: AiPredictionRow }) {
       <div className="mt-4">
         <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
           <Activity className="h-3.5 w-3.5" />
-          Du lieu dung de doi chieu
+          Dữ liệu dùng để đối chiếu
         </p>
         <EvidenceGrid row={row} />
       </div>
@@ -230,11 +238,11 @@ export default function AiDiagnosisPage() {
   });
 
   const disclaimerText = predictionsQuery.data?.disclaimer
-    || 'Ket qua AI chi de bac si tham khao trong qua trinh kham chua benh, khong thay the chan doan chuyen mon.';
+    || 'Kết quả AI chỉ để bác sĩ tham khảo trong quá trình khám chữa bệnh, không thay thế chẩn đoán chuyên môn.';
 
   const handleVerifyCode = async () => {
     if (!/^\d{6}$/.test(accessCode)) {
-      setAccessError('Ma truy cap phai gom 6 chu so.');
+      setAccessError('Mã truy cập phải gồm 6 chữ số.');
       return;
     }
     try {
@@ -260,7 +268,7 @@ export default function AiDiagnosisPage() {
       setDeviceId(patient_summary.device_id);
       setAccessCode('');
     } catch (err) {
-      setAccessError(err instanceof Error ? err.message : 'Khong xac thuc duoc ma truy cap.');
+      setAccessError(err instanceof Error ? err.message : 'Không xác thực được mã truy cập.');
     } finally {
       setIsVerifying(false);
     }
@@ -272,15 +280,15 @@ export default function AiDiagnosisPage() {
         <div>
           <div className="flex items-center gap-2">
             <BrainCircuit className="h-6 w-6 text-sky-600" />
-            <h1 className="text-2xl font-bold text-slate-900">Ket qua AI chan doan</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Kết quả AI chẩn đoán</h1>
           </div>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            Xem lai ket qua du doan kem du lieu dau vao de bac si doi chieu. Bac si chi xem duoc khi benh nhan da cap ma dong thuan.
+            Xem lại kết quả dự đoán kèm dữ liệu đầu vào để bác sĩ đối chiếu. Bác sĩ chỉ xem được khi bệnh nhân đã cấp mã đồng thuận.
           </p>
         </div>
         <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
           <ShieldCheck className="mr-2 inline h-4 w-4" />
-          Du lieu AI duoc bao ve theo phien dong thuan
+          Dữ liệu AI được bảo vệ theo phiên đồng thuận
         </div>
       </div>
       <p className="text-xs text-slate-500">
@@ -288,10 +296,10 @@ export default function AiDiagnosisPage() {
       </p>
 
       <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        <p className="font-semibold text-slate-700">Cach hieu ket qua AI</p>
-        <p className="mt-1">1) AI chi chay khi du thong tin (HR, SpO2, nhiet do, MAP/huyet ap, ho so benh nhan, ECG du cua so).</p>
-        <p className="mt-1">2) Ket qua duoc tong hop tu nhieu mau gan day, khong phai canh bao tung mau realtime.</p>
-        <p className="mt-1">3) Moi ket qua kem theo du lieu doi chieu de bac si xem lai va so sanh.</p>
+        <p className="font-semibold text-slate-700">Cách hiểu kết quả AI</p>
+        <p className="mt-1">1) AI chỉ chạy khi đủ thông tin (HR, SpO2, nhiệt độ, MAP/huyết áp, hồ sơ bệnh nhân, ECG đủ cửa sổ).</p>
+        <p className="mt-1">2) Kết quả được tổng hợp từ nhiều mẫu gần đây, không phải cảnh báo từng mẫu realtime.</p>
+        <p className="mt-1">3) Mỗi kết quả kèm theo dữ liệu đối chiếu để bác sĩ xem lại và so sánh.</p>
       </section>
 
       {user?.role === 'doctor' && (
@@ -302,7 +310,7 @@ export default function AiDiagnosisPage() {
               <input
                 value={accessCode}
                 onChange={(e) => setAccessCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="6 chu so"
+                placeholder="6 chữ số"
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
               />
             </div>
@@ -313,7 +321,7 @@ export default function AiDiagnosisPage() {
               className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
             >
               <KeyRound className="h-4 w-4" />
-              {isVerifying ? 'Dang xac thuc...' : 'Mo quyen xem'}
+              {isVerifying ? 'Đang xác thực...' : 'Mở quyền xem'}
             </button>
           </div>
           {accessError && <p className="mt-2 text-sm text-red-600">{accessError}</p>}
@@ -330,7 +338,7 @@ export default function AiDiagnosisPage() {
                 onChange={(e) => { setDeviceId(e.target.value); setPage(1); }}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
               >
-                {doctorSessions.length === 0 && <option value="">Chua co phien dong thuan</option>}
+                {doctorSessions.length === 0 && <option value="">Chưa có phiên đồng thuận</option>}
                 {doctorSessions.map(([id, session]) => (
                   <option key={id} value={id}>{session.patient_name || 'Benh nhan'} - {session.device_name || id}</option>
                 ))}
@@ -341,7 +349,7 @@ export default function AiDiagnosisPage() {
                 onChange={(e) => { setDeviceId(e.target.value); setPage(1); }}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
               >
-                {patientDevices.length === 0 && <option value="">Chua co thiet bi</option>}
+                {patientDevices.length === 0 && <option value="">Chưa có thiết bị</option>}
                 {patientDevices.map((device) => (
                   <option key={device.device_id} value={device.device_id || ''}>{device.name || device.device_id}</option>
                 ))}
@@ -356,24 +364,24 @@ export default function AiDiagnosisPage() {
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
             >
               <option value="">Tat ca mo hinh</option>
-              <option value="vitals-risk">Sinh hieu tong hop</option>
-              <option value="ecg-arrhythmia">Dien tim ECG</option>
+              <option value="vitals-risk">Sinh hiệu tổng hợp</option>
+              <option value="ecg-arrhythmia">Điện tim ECG</option>
             </select>
           </label>
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-slate-400">Tong ket</p>
+            <p className="text-xs uppercase tracking-wide text-slate-400">Tổng kết</p>
             <p className="mt-1 text-lg font-semibold text-slate-800">
-              {predictionsQuery.data?.pagination.total ?? 0} ket qua
+              {predictionsQuery.data?.pagination.total ?? 0} kết quả
             </p>
           </div>
         </div>
       </section>
 
       {predictionsQuery.isLoading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Dang tai ket qua AI...</div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Đang tải kết quả AI...</div>
       ) : predictionsQuery.isError ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
-          {predictionsQuery.error instanceof Error ? predictionsQuery.error.message : 'Khong tai duoc ket qua AI'}
+          {predictionsQuery.error instanceof Error ? predictionsQuery.error.message : 'Không tải được kết quả AI'}
         </div>
       ) : predictionsQuery.data?.data.length ? (
         <div className="space-y-3">
@@ -382,8 +390,8 @@ export default function AiDiagnosisPage() {
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center">
           <FileSearch className="mx-auto h-8 w-8 text-slate-300" />
-          <p className="mt-2 text-sm font-medium text-slate-700">Chua co ket qua AI co du lieu doi chieu</p>
-          <p className="mt-1 text-sm text-slate-500">Hay dam bao thiet bi gui du du lieu va ho so benh nhan da cap nhat day du.</p>
+          <p className="mt-2 text-sm font-medium text-slate-700">Chưa có kết quả AI có dữ liệu đối chiếu</p>
+          <p className="mt-1 text-sm text-slate-500">Hãy đảm bảo thiết bị gửi đủ dữ liệu và hồ sơ bệnh nhân đã cập nhật đầy đủ.</p>
         </div>
       )}
 
