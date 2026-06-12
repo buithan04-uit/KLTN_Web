@@ -21,6 +21,7 @@ const HealthModel = {
         diastolic_bp,
         map,
         session_id,
+        note,
     }) => {
         const normalizedPoints = normalizeEcgPoints(ecg_points);
         const derivedEcgValue = normalizedPoints
@@ -30,8 +31,8 @@ const HealthModel = {
         const result = await db.query(
             `INSERT INTO health_data
                 (time, device_id, heart_rate, spo2, temperature, ecg_value, ecg_points,
-                 systolic_bp, diastolic_bp, map, session_id)
-             VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 systolic_bp, diastolic_bp, map, session_id, note)
+             VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              RETURNING *`,
             [
                 device_id,
@@ -44,6 +45,7 @@ const HealthModel = {
                 diastolic_bp,
                 map,
                 session_id,
+                note || null,
             ]
         );
         return result.rows[0];
@@ -207,6 +209,41 @@ const HealthModel = {
             latest: latestResult.rows[0] || null,
             stats: statsResult.rows[0] || null,
         };
+    },
+
+    attachManualBloodPressureToLatest: async ({ device_id, systolic_bp, diastolic_bp, map }) => {
+        const updated = await db.query(
+            `UPDATE health_data
+             SET systolic_bp = $2,
+                 diastolic_bp = $3,
+                 map = $4,
+                 note = COALESCE(note, 'manual_blood_pressure_input')
+             WHERE time = (
+                 SELECT time
+                 FROM health_data
+                 WHERE device_id = $1
+                 ORDER BY time DESC
+                 LIMIT 1
+             )
+               AND device_id = $1
+             RETURNING *`,
+            [device_id, systolic_bp, diastolic_bp, map]
+        );
+
+        if (updated.rows[0]) return updated.rows[0];
+
+        return HealthModel.insert({
+            device_id,
+            heart_rate: null,
+            spo2: null,
+            temperature: null,
+            ecg_value: null,
+            ecg_points: null,
+            systolic_bp,
+            diastolic_bp,
+            map,
+            session_id: null,
+        });
     },
 
     markAbnormal: async (time, device_id, note) => {

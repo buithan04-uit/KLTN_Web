@@ -8,8 +8,8 @@ This script is intended for manual testing of both AI diagnosis flows:
 Default usage:
   python scripts/simulate_ai_device.py
 
-By default it runs continuously for DEV_01 and cycles through long phases:
-normal baseline, high-risk vitals, recovery, ECG abnormal, recovery.
+By default it runs continuously for DEV_01 in dual-ai mode, meaning every
+message carries stable vitals and ECG points in parallel.
 Each phase lasts long enough for the AI summary window to see a coherent trend.
 Press Ctrl+C to stop.
 
@@ -32,6 +32,10 @@ from urllib.parse import urlparse
 
 ECG_SAMPLING_RATE_HZ = 360
 ECG_POINTS_PER_MESSAGE = 128
+STABLE_ECG_POINTS_PER_MESSAGE = 256
+DEFAULT_ECG_TEMPLATE_FILE = Path(__file__).resolve().parent / "ecg_templates.json"
+ECG_TEMPLATES: dict[str, list[list[float]]] = {}
+ECG_TEMPLATE_SCALE = "raw"
 DEFAULT_PHASE_PLAN = [
     ("normal", 60),
     ("high-risk", 60),
@@ -120,9 +124,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--session-id", default=os.getenv("SIM_SESSION_ID"), help="Optional health session ID")
     parser.add_argument(
         "--mode",
-        choices=["auto", "normal", "high-risk", "ecg-abnormal", "mixed"],
-        default=os.getenv("SIM_AI_MODE", "auto"),
-        help="Data scenario. auto runs long phases; mixed keeps the old short cycle.",
+        choices=["auto", "normal", "stable-both", "dual-ai", "ecg-stable", "high-risk", "ecg-abnormal", "mixed"],
+        default=os.getenv("SIM_AI_MODE", "dual-ai"),
+        help="Data scenario. dual-ai sends vitals and ECG together continuously.",
     )
     parser.add_argument(
         "--count",
@@ -137,6 +141,15 @@ def parse_args() -> argparse.Namespace:
         help="Seconds between messages",
     )
     parser.add_argument("--seed", type=int, default=None, help="Random seed for repeatable test data")
+    parser.add_argument(
+        "--ecg-template-file",
+        default=os.getenv("SIM_ECG_TEMPLATE_FILE", str(DEFAULT_ECG_TEMPLATE_FILE)),
+        help=(
+            "Optional JSON templates exported from train/test ECG data. "
+            "Format: {'scale':'raw'|'normalized','templates':{'N':[[...]],'V':[[...]]}} "
+            "or {'N':[...], 'V':[...]}."
+        ),
+    )
     parser.add_argument(
         "--phase-plan",
         default=os.getenv("SIM_AI_PHASE_PLAN"),
@@ -192,7 +205,7 @@ def parse_phase_plan(raw: str | None) -> list[tuple[str, int]]:
     if not raw:
         return DEFAULT_PHASE_PLAN
 
-    allowed = {"normal", "high-risk", "ecg-abnormal"}
+    allowed = {"normal", "stable-both", "dual-ai", "ecg-stable", "high-risk", "ecg-abnormal"}
     plan: list[tuple[str, int]] = []
     for chunk in raw.split(","):
         item = chunk.strip()
@@ -230,17 +243,89 @@ def normalized_to_raw_ecg(value: float) -> float:
     return value * ECG_TRAIN_STD + ECG_TRAIN_MEAN
 
 
+def resample_points(points: list[float], target_count: int) -> list[float]:
+    if len(points) == target_count:
+        return points
+    if len(points) < 2:
+        return [points[0] if points else 0.0] * target_count
+
+    result: list[float] = []
+    last = len(points) - 1
+    for i in range(target_count):
+        position = (i * last) / max(target_count - 1, 1)
+        left = int(math.floor(position))
+        right = min(left + 1, last)
+        ratio = position - left
+        result.append(points[left] * (1 - ratio) + points[right] * ratio)
+    return result
+
+
+def normalize_template_collection(value) -> list[list[float]]:
+    if not value:
+        return []
+
+    if isinstance(value, list) and value and all(isinstance(item, (int, float)) for item in value):
+        return [[float(item) for item in value]]
+
+    templates: list[list[float]] = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, list):
+                numeric = [float(v) for v in item if isinstance(v, (int, float))]
+                if numeric:
+                    templates.append(numeric)
+    return templates
+
+
+def load_ecg_templates(path_raw: str | None) -> tuple[dict[str, list[list[float]]], str]:
+    if not path_raw:
+        return {}, "raw"
+
+    path = Path(path_raw)
+    if not path.exists():
+        return {}, "raw"
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    scale = str(data.get("scale", "raw")).strip().lower() if isinstance(data, dict) else "raw"
+    source = data.get("templates", data) if isinstance(data, dict) else data
+    templates: dict[str, list[list[float]]] = {}
+
+    if isinstance(source, dict):
+        for label, collection in source.items():
+            normalized = normalize_template_collection(collection)
+            if normalized:
+                templates[str(label)] = normalized
+
+    return templates, scale if scale in {"raw", "normalized"} else "raw"
+
+
+def select_ecg_template(label: str, index: int, sample_count: int) -> list[float] | None:
+    templates = ECG_TEMPLATES.get(label) or ECG_TEMPLATES.get(label.upper())
+    if not templates:
+        return None
+
+    template = templates[index % len(templates)]
+    points = resample_points(template, sample_count)
+    if ECG_TEMPLATE_SCALE == "normalized":
+        points = [normalized_to_raw_ecg(value) for value in points]
+
+    # Tiny jitter prevents duplicate rows while preserving the train/test shape.
+    return [round(clamp(value + random.uniform(-0.002, 0.002), -5.0, 5.0), 4) for value in points]
+
+
 def gaussian(x: float, center: float, width: float, amplitude: float) -> float:
     return amplitude * math.exp(-((x - center) ** 2) / width)
 
 
-def ecg_label_for_scenario(scenario: str) -> str:
+def ecg_label_for_scenario(scenario: str, index: int = 0) -> str:
     if scenario == "ecg-abnormal":
+        return "V"
+    if scenario == "dual-ai" and (index // 5) % 2 == 1:
         return "V"
     return "N"
 
 
-def build_ecg_points(index: int, scenario: str) -> list[float]:
+def build_ecg_points(index: int, scenario: str, sample_count: int = ECG_POINTS_PER_MESSAGE) -> list[float]:
     """Create a MIT-BIH-like raw ECG window.
 
     The ECG model was trained on MIT-BIH beats centered on annotated R-peaks.
@@ -252,10 +337,13 @@ def build_ecg_points(index: int, scenario: str) -> list[float]:
     """
 
     points = []
-    peak_center = ECG_POINTS_PER_MESSAGE // 2
-    label = ecg_label_for_scenario(scenario)
+    peak_center = sample_count // 2
+    label = ecg_label_for_scenario(scenario, index)
+    template_points = select_ecg_template(label, index, sample_count)
+    if template_points:
+        return template_points
 
-    for i in range(ECG_POINTS_PER_MESSAGE):
+    for i in range(sample_count):
         x = i - peak_center
         baseline = 0.04 * math.sin((index * 0.5) + i * 0.045)
 
@@ -263,23 +351,26 @@ def build_ecg_points(index: int, scenario: str) -> list[float]:
             # Wider QRS-like complex. Kept in normalized train space.
             z = (
                 baseline
-                + gaussian(x, -28, 90, 0.10)
-                + gaussian(x, -8, 26, -0.45)
-                + gaussian(x, 0, 34, 2.15)
-                + gaussian(x, 13, 48, -0.75)
-                + gaussian(x, 36, 170, 0.28)
+                + gaussian(x, -30, 130, 0.08)
+                + gaussian(x, -10, 42, -0.55)
+                + gaussian(x, 0, 58, 2.35)
+                + gaussian(x, 18, 86, -0.95)
+                + gaussian(x, 44, 220, 0.24)
                 + random.uniform(-0.025, 0.025)
             )
         else:
             # Normal-beat-like morphology: narrow R peak centered in the window.
+            # stable-both/ecg-stable use lower noise and a longer window so ECG preprocessing
+            # has enough clean points while preserving the same morphology.
+            noise_span = 0.006 if scenario in ("stable-both", "dual-ai", "ecg-stable") else 0.018
             z = (
-                baseline
-                + gaussian(x, -23, 70, 0.16)
-                + gaussian(x, -4, 8, -0.35)
-                + gaussian(x, 0, 4.8, 2.35)
-                + gaussian(x, 5, 11, -0.52)
-                + gaussian(x, 29, 120, 0.36)
-                + random.uniform(-0.018, 0.018)
+                (baseline * 0.35)
+                + gaussian(x, -24, 75, 0.10)
+                + gaussian(x, -3, 6, -0.16)
+                + gaussian(x, 0, 2.8, 1.05)
+                + gaussian(x, 4, 8, -0.22)
+                + gaussian(x, 34, 160, 0.18)
+                + random.uniform(-noise_span, noise_span)
             )
 
         raw = normalized_to_raw_ecg(z)
@@ -302,6 +393,15 @@ def build_payload_for_scenario(device_id: str, session_id: str | None, scenario:
         target_map = VITALS_SCALER_MEAN["map"] + (4.4 * VITALS_SCALER_SCALE["map"])
         diastolic = 96 + (index % 3)
         systolic = (3 * target_map) - (2 * diastolic)
+    elif scenario in ("stable-both", "dual-ai", "ecg-stable"):
+        # Stable values close to the trained scaler mean. This mode is meant to
+        # verify that both AI flows receive coherent, low-noise input.
+        hr = VITALS_SCALER_MEAN["heart_rate"] + random.uniform(-0.12, 0.12) * VITALS_SCALER_SCALE["heart_rate"]
+        spo2 = VITALS_SCALER_MEAN["spo2"] + random.uniform(-0.08, 0.08) * VITALS_SCALER_SCALE["spo2"]
+        temp = VITALS_SCALER_MEAN["temperature"] + random.uniform(-0.08, 0.08) * VITALS_SCALER_SCALE["temperature"]
+        target_map = VITALS_SCALER_MEAN["map"] + random.uniform(-0.10, 0.10) * VITALS_SCALER_SCALE["map"]
+        diastolic = 78 + (index % 2)
+        systolic = (3 * target_map) - (2 * diastolic)
     else:
         hr = VITALS_SCALER_MEAN["heart_rate"] + random.uniform(-0.35, 0.35) * VITALS_SCALER_SCALE["heart_rate"]
         spo2 = VITALS_SCALER_MEAN["spo2"] + random.uniform(-0.25, 0.25) * VITALS_SCALER_SCALE["spo2"]
@@ -311,26 +411,47 @@ def build_payload_for_scenario(device_id: str, session_id: str | None, scenario:
         systolic = (3 * target_map) - (2 * diastolic)
 
     mean_arterial_pressure = map_bp(systolic, diastolic)
-    ecg_points = build_ecg_points(index, scenario)
+    ecg_sample_count = (
+        STABLE_ECG_POINTS_PER_MESSAGE
+        if scenario in ("stable-both", "dual-ai", "ecg-stable", "ecg-abnormal")
+        else ECG_POINTS_PER_MESSAGE
+    )
+    ecg_points = build_ecg_points(index, scenario, sample_count=ecg_sample_count)
+
+    heart_rate = int(round(hr))
+    temperature = round(temp, 2)
+    systolic_bp = int(round(systolic))
+    diastolic_bp = int(round(diastolic))
+    ecg_value = ecg_points[-1]
 
     return {
         "device_id": device_id,
-        "hr": int(round(hr)),
+        # Legacy fields used by the current realtime/MQTT flow.
+        "hr": heart_rate,
         "spo2": round(spo2, 1),
-        "temp": round(temp, 2),
-        "systolic_bp": int(round(systolic)),
-        "diastolic_bp": int(round(diastolic)),
+        "temp": temperature,
+        "ecg": ecg_value,
+        # Explicit AI-friendly aliases used by newer preprocessing.
+        "heart_rate": heart_rate,
+        "temperature": temperature,
+        "ecg_value": ecg_value,
+        "systolic_bp": systolic_bp,
+        "diastolic_bp": diastolic_bp,
         "map": round(mean_arterial_pressure, 1),
-        "ecg": ecg_points[-1],
+        "blood_pressure_source": "manual_test_input",
         "ecg_points": ecg_points,
+        "sampling_rate": ECG_SAMPLING_RATE_HZ,
+        "expected_sampling_rate": ECG_SAMPLING_RATE_HZ,
         "ecg_sampling_rate": ECG_SAMPLING_RATE_HZ,
         "ecg_lead": "II",
+        "temperature_corrected": False,
+        "temperature_calibration_version": None,
         "ecg_train_scale": {
             "mean": ECG_TRAIN_MEAN,
             "std": ECG_TRAIN_STD,
             "note": "payload is raw ECG; backend applies (raw - mean) / std",
         },
-        "ecg_expected_label": ecg_label_for_scenario(scenario),
+        "ecg_expected_label": ecg_label_for_scenario(scenario, index),
         "scenario": scenario,
         "session_id": session_id,
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -354,6 +475,8 @@ def create_client(mqtt_module):
 
 
 def main() -> int:
+    global ECG_TEMPLATES, ECG_TEMPLATE_SCALE
+
     args = parse_args()
     if args.broker:
         host, port, is_tls = parse_broker_url(args.broker)
@@ -369,6 +492,13 @@ def main() -> int:
     except ValueError as exc:
         print(f"Invalid phase plan: {exc}")
         return 2
+
+    ECG_TEMPLATES, ECG_TEMPLATE_SCALE = load_ecg_templates(args.ecg_template_file)
+    if ECG_TEMPLATES:
+        labels = ", ".join(f"{label}:{len(items)}" for label, items in sorted(ECG_TEMPLATES.items()))
+        print(f"Loaded ECG templates from {args.ecg_template_file} ({ECG_TEMPLATE_SCALE}): {labels}")
+    else:
+        print("No ECG template file loaded; falling back to synthetic ECG generator.")
 
     topic = resolve_topic(args.topic, args.device_id)
     mqtt_module = load_mqtt_module()

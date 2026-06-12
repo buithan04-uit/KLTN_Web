@@ -29,7 +29,7 @@ const navItems = [
   { href: '/dashboard/abnormal', label: 'Cảnh báo', icon: AlertTriangle, roles: ['admin', 'doctor'] as AppRole[] },
   { href: '/dashboard/devices', label: 'Thiết bị của tôi', icon: Cpu, roles: ['patient', 'doctor'] as AppRole[] },
   { href: '/admin/devices', label: 'Quản lý thiết bị', icon: Cpu, roles: ['admin'] as AppRole[] },
-  { href: '/dashboard/ai-diagnosis', label: 'Chẩn đoán AI', icon: BrainCircuit, roles: ['patient', 'doctor'] as AppRole[] },
+  { href: '/dashboard/ai-diagnosis', label: 'Nguy cơ sinh hiệu', icon: BrainCircuit, roles: ['patient', 'doctor'] as AppRole[] },
   { href: '/admin/audit-logs', label: 'Audit Logs', icon: FileText, roles: ['admin'] as AppRole[] },
   { href: '/admin/users', label: 'Quản lý người dùng', icon: UserCircle, roles: ['admin'] as AppRole[] },
   { href: '/dashboard/privacy', label: 'Privacy Center', icon: UserCircle, roles: ['patient'] as AppRole[] },

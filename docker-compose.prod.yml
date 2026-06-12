@@ -1,7 +1,5 @@
-# Production Docker Compose Configuration for Ubuntu 24.04
-# Usage: docker-compose -f docker-compose.prod.yml up -d
-
-version: '3.8'
+# Production Docker Compose Configuration
+# Usage: docker compose -f docker-compose.prod.yml up -d
 
 services:
   # 1. Database: TimescaleDB (Production Configuration)
@@ -16,7 +14,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./database/data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - telehealth
@@ -32,7 +30,7 @@ services:
     container_name: telehealth_mqtt
     restart: unless-stopped
     ports:
-      - "127.0.0.1:1883:1883"
+      - "1883:1883"
       - "127.0.0.1:9001:9001"
     volumes:
       - ./mosquitto/config:/mosquitto/config

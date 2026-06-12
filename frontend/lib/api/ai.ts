@@ -14,6 +14,36 @@ export interface AiPredictionRow {
   created_at: string;
 }
 
+export interface AiCoverage {
+  mode?: "sensor-only" | "partial" | "full";
+  available_fields?: string[];
+  missing_fields?: string[];
+  sensor_fields?: string[];
+  manual_fields?: string[];
+  model_required_fields?: string[];
+  has_any_sensor_data?: boolean;
+  has_manual_blood_pressure?: boolean;
+}
+
+export interface AiRuleBasedAssessment {
+  methodology?: string;
+  total_score?: number;
+  highest_single_score?: number;
+  status?: AiStatus;
+  label?: string;
+  interpretation?: string;
+  components?: Array<{
+    field: string;
+    label?: string;
+    value?: number | string | null;
+    unit?: string;
+    score?: number;
+    source?: "sensor" | "manual_input" | string;
+    calibration?: Record<string, unknown>;
+  }>;
+  limitations?: string[];
+}
+
 export interface AiModelSummary {
   latest: AiPredictionRow;
   status: AiStatus;
@@ -62,7 +92,7 @@ const getStoredConsentToken = () => {
 
 const request = async <T>(
   path: string,
-  options: { token?: string | null; consentToken?: string | null } = {}
+  options: { token?: string | null; consentToken?: string | null; method?: "GET" | "POST"; body?: unknown } = {}
 ): Promise<T> => {
   const token = options.token ?? getStoredToken();
   const consentToken = options.consentToken ?? getStoredConsentToken();
@@ -70,10 +100,12 @@ const request = async <T>(
 
   if (token) headers.Authorization = `Bearer ${token}`;
   if (consentToken) headers["x-consent-session-token"] = consentToken;
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
 
   const res = await fetch(`${API_BASE_URL}${path}`, {
-    method: "GET",
+    method: options.method || "GET",
     headers,
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     cache: "no-store",
   });
 
@@ -119,4 +151,27 @@ export const aiApi = {
       options
     );
   },
+  predictLatest: (
+    deviceId: string,
+    options: { token?: string | null; consentToken?: string | null } = {}
+  ) => request<{
+    device_id: string;
+    predictions: Record<string, unknown>;
+    persisted_count: number;
+    disclaimer: string;
+  }>(`/api/ai/predict/latest/${encodeURIComponent(deviceId)}`, { ...options, method: "POST" }),
+  recordManualBloodPressure: (
+    deviceId: string,
+    body: { systolic_bp: number; diastolic_bp: number },
+    options: { token?: string | null; consentToken?: string | null } = {}
+  ) => request<{
+    data: Record<string, unknown>;
+    source: "manual_input";
+    message: string;
+    disclaimer: string;
+  }>(`/api/ai/manual-blood-pressure/${encodeURIComponent(deviceId)}`, {
+    ...options,
+    method: "POST",
+    body,
+  }),
 };

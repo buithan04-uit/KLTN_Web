@@ -46,13 +46,88 @@ const deriveMap = (systolic, diastolic, explicitMap) => {
     return (systolic + 2 * diastolic) / 3;
 };
 
-const normalizeEcgPoints = (points) => {
+const normalizeEcgPoints = (points, maxPoints = 256) => {
     if (!Array.isArray(points)) return null;
     const normalized = points
         .map((v) => parseNumeric(v))
         .filter((v) => v !== null)
-        .slice(0, 256);
+        .slice(0, maxPoints);
     return normalized.length ? normalized : null;
+};
+
+const normalizeEcgFrame = (payload) => {
+    if (payload?.type !== 'ecg_frame') return null;
+
+    const mvPoints = normalizeEcgPoints(payload?.mv, 1000);
+    const yPoints = normalizeEcgPoints(payload?.y, 1000);
+    const points = mvPoints || yPoints;
+    const expectedLength = Math.round(parseNumeric(payload?.n) || points?.length || 0);
+
+    if (!points || !expectedLength || points.length !== expectedLength) {
+        return {
+            error: `Invalid ECG frame length for device ${payload?.device_id || 'unknown'}`,
+        };
+    }
+
+    return {
+        value: {
+            points,
+            lcd_points: yPoints,
+            source: mvPoints ? 'mv' : 'y',
+            mode: typeof payload?.mode === 'string' ? payload.mode : null,
+            unit: mvPoints ? (payload?.unit || 'mV') : 'lcd_y',
+            display: payload?.display || null,
+            sampling_rate: parseNumeric(payload?.fs),
+            n: expectedLength,
+            seq: parseNumeric(payload?.seq),
+            start_ms: parseNumeric(payload?.start_ms),
+            min_mv: parseNumeric(payload?.min_mv ?? payload?.min),
+            max_mv: parseNumeric(payload?.max_mv ?? payload?.max),
+            p2p_mv: parseNumeric(payload?.p2p_mv ?? payload?.p2p),
+            clip_pct: parseNumeric(payload?.clip_pct ?? payload?.clip ?? payload?.clip_percent),
+            hr_ecg: parseNumeric(payload?.hr_ecg),
+            hr_ppg: parseNumeric(payload?.hr_ppg),
+            hr_source: typeof payload?.hr_source === 'string' ? payload.hr_source : null,
+        },
+    };
+};
+
+const normalizeEcgAiWindow = (payload) => {
+    const hasWindow = Array.isArray(payload?.window);
+    if (payload?.type !== 'ecg_ai_window' && payload?.mode !== 'ecg_ai' && !hasWindow) return null;
+
+    const windowPoints = normalizeEcgPoints(payload?.window);
+    const expectedLength = Math.round(parseNumeric(payload?.n) || windowPoints?.length || 0);
+    const rPeakIndex = parseNumeric(payload?.r_peak_index);
+    const samplingRate = parseNumeric(payload?.fs);
+
+    if (!windowPoints || !expectedLength || windowPoints.length !== expectedLength) {
+        return {
+            error: `Invalid ECG AI window length for device ${payload?.device_id || 'unknown'}`,
+        };
+    }
+
+    return {
+        value: {
+            points: windowPoints,
+            normalized: payload?.normalized === true,
+            r_peak_index: rPeakIndex,
+            sampling_rate: samplingRate,
+            mean: parseNumeric(payload?.mean),
+            std: parseNumeric(payload?.std),
+            beat: parseNumeric(payload?.beat),
+        },
+    };
+};
+
+const summarizePoints = (points) => {
+    if (!Array.isArray(points) || points.length === 0) {
+        return { min: null, max: null };
+    }
+    return {
+        min: Math.min(...points),
+        max: Math.max(...points),
+    };
 };
 
 const normalizePayload = (payload, deviceIdFromTopic) => {
@@ -66,38 +141,61 @@ const normalizePayload = (payload, deviceIdFromTopic) => {
         return { error: 'Missing device_id in topic and payload' };
     }
 
-    const heart_rate = clampRange(parseNumeric(payload?.hr), 20, 250);
-    const spo2 = clampRange(parseNumeric(payload?.spo2), 50, 100);
-    const temperature = clampRange(parseNumeric(payload?.temp), 25, 45);
-    const ecg_value = clampRange(parseNumeric(payload?.ecg), -5, 5);
+    const heart_rate = clampRange(parseNumeric(payload?.hr ?? payload?.heart_rate ?? payload?.bpm), 20, 250);
+    const spo2 = clampRange(parseNumeric(payload?.spo2 ?? payload?.SpO2), 50, 100);
+    const temperature = clampRange(parseNumeric(payload?.temp ?? payload?.temperature ?? payload?.body_temp), 25, 45);
+    const ecg_value = parseNumeric(payload?.ecg ?? payload?.ecg_value);
     const systolic_bp = clampRange(parseNumeric(payload?.systolic_bp ?? payload?.systolic ?? payload?.sbp), 50, 260);
     const diastolic_bp = clampRange(parseNumeric(payload?.diastolic_bp ?? payload?.diastolic ?? payload?.dbp), 30, 180);
     const explicitMap = clampRange(parseNumeric(payload?.map ?? payload?.MAP), 40, 200);
     const map = clampRange(deriveMap(systolic_bp, diastolic_bp, explicitMap), 40, 200);
-    const ecg_points = normalizeEcgPoints(payload?.ecg_points);
+    const ecgFrame = normalizeEcgFrame(payload);
+    if (ecgFrame?.error) return { error: ecgFrame.error };
+    const ecgAiWindow = normalizeEcgAiWindow(payload);
+    if (ecgAiWindow?.error) return { error: ecgAiWindow.error };
+    const ecg_points = ecgFrame?.value?.points || ecgAiWindow?.value?.points || normalizeEcgPoints(payload?.ecg_points);
     const session_id = payload?.session_id ? String(payload.session_id) : null;
     const hasVitals = heart_rate !== null || spo2 !== null || temperature !== null
         || ecg_value !== null || ecg_points !== null || systolic_bp !== null
         || diastolic_bp !== null || map !== null;
 
     if (!hasVitals) {
-        return { error: `No valid vitals fields for device ${device_id}` };
+        const keys = payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 16).join(',') : '';
+        return {
+            error: `No valid vitals fields for device ${device_id} (type=${payload?.type || '-'}, mode=${payload?.mode || '-'}, window_len=${Array.isArray(payload?.window) ? payload.window.length : 0}, keys=${keys})`,
+        };
     }
 
     return {
         value: {
             device_id,
+            payload_type: typeof payload?.type === 'string' ? payload.type : null,
             heart_rate,
             spo2,
             temperature,
             ecg_value,
             ecg_points,
+            note: ecgFrame?.value ? 'ecg_frame' : ecgAiWindow?.value?.normalized ? 'ecg_ai_window_normalized' : null,
+            ecg_frame: ecgFrame?.value || null,
+            ecg_ai_window: ecgAiWindow?.value || null,
             systolic_bp,
             diastolic_bp,
             map,
             session_id,
         },
     };
+};
+
+const shouldRunAiForPayload = (data) => {
+    if (data?.ecg_ai_window) return true;
+    if (data?.ecg_frame) return false;
+    if (data?.payload_type === 'ecg_sample') return false;
+    return data?.heart_rate !== null
+        || data?.spo2 !== null
+        || data?.temperature !== null
+        || data?.systolic_bp !== null
+        || data?.diastolic_bp !== null
+        || data?.map !== null;
 };
 
 const runAiForInsertedRecord = async ({ io, inserted, device }) => {
@@ -114,7 +212,7 @@ const runAiForInsertedRecord = async ({ io, inserted, device }) => {
 
         const patientProfile = await UserModel.getProfile(device.owner_id);
         let healthRecordForAi = inserted;
-        if (!Array.isArray(inserted.ecg_points) || inserted.ecg_points.length < 100) {
+        if (!healthRecordForAi.ecg_ai_window && (!Array.isArray(inserted.ecg_points) || inserted.ecg_points.length < 100)) {
             const ecgPoints = await HealthModel.getRecentEcgPoints(inserted.device_id, 8);
             if (ecgPoints.length >= 100) {
                 healthRecordForAi = {
@@ -248,11 +346,31 @@ const initMQTT = (io) => {
                 temperature: data.temperature,
                 ecg_value: data.ecg_value,
                 ecg_points: data.ecg_points,
+                note: data.note,
                 systolic_bp: data.systolic_bp,
                 diastolic_bp: data.diastolic_bp,
                 map: data.map,
                 session_id: data.session_id,
             });
+
+            if (data.ecg_ai_window) {
+                const { min, max } = summarizePoints(data.ecg_ai_window.points);
+                console.log(
+                    `[MQTT][ecg_ai_window] device=${device_id} n=${data.ecg_ai_window.points.length} `
+                    + `fs=${data.ecg_ai_window.sampling_rate ?? '-'} r=${data.ecg_ai_window.r_peak_index ?? '-'} `
+                    + `normalized=${data.ecg_ai_window.normalized} min=${min?.toFixed?.(3) ?? '-'} max=${max?.toFixed?.(3) ?? '-'}`
+                );
+            }
+            if (data.ecg_frame) {
+                const { min, max } = summarizePoints(data.ecg_frame.points);
+                console.log(
+                    `[MQTT][ecg_frame] device=${device_id} n=${data.ecg_frame.points.length} `
+                    + `fs=${data.ecg_frame.sampling_rate ?? '-'} source=${data.ecg_frame.source} `
+                    + `lcd=${data.ecg_frame.lcd_points?.length ?? 0} `
+                    + `clip=${data.ecg_frame.clip_pct ?? '-'}% p2p=${data.ecg_frame.p2p_mv ?? '-'} `
+                    + `hr=${data.heart_rate ?? '-'} range=${min?.toFixed?.(1) ?? '-'}..${max?.toFixed?.(1) ?? '-'}`
+                );
+            }
 
             const realtimePayload = {
                 device_id,
@@ -260,6 +378,26 @@ const initMQTT = (io) => {
                 spo2: inserted?.spo2 ?? null,
                 temp: inserted?.temperature ?? null,
                 ecg: inserted?.ecg_value ?? null,
+                ecg_points: data.ecg_points,
+                ecg_lcd_points: data.ecg_frame?.lcd_points ?? null,
+                type: data.ecg_frame ? 'ecg_frame' : data.ecg_ai_window ? 'ecg_ai_window' : data.payload_type || undefined,
+                mode: data.ecg_frame?.mode ?? (data.ecg_ai_window ? 'ecg_ai' : undefined),
+                fs: data.ecg_frame?.sampling_rate ?? data.ecg_ai_window?.sampling_rate ?? null,
+                n: data.ecg_frame?.points?.length ?? data.ecg_ai_window?.points?.length ?? null,
+                r_peak_index: data.ecg_ai_window?.r_peak_index ?? null,
+                normalized: data.ecg_ai_window?.normalized ?? null,
+                ecg_unit: data.ecg_frame?.unit ?? null,
+                ecg_source: data.ecg_frame?.source ?? null,
+                ecg_display: data.ecg_frame?.display ?? null,
+                ecg_seq: data.ecg_frame?.seq ?? null,
+                ecg_start_ms: data.ecg_frame?.start_ms ?? null,
+                min_mv: data.ecg_frame?.min_mv ?? null,
+                max_mv: data.ecg_frame?.max_mv ?? null,
+                p2p_mv: data.ecg_frame?.p2p_mv ?? null,
+                clip_pct: data.ecg_frame?.clip_pct ?? null,
+                hr_ecg: data.ecg_frame?.hr_ecg ?? null,
+                hr_ppg: data.ecg_frame?.hr_ppg ?? null,
+                hr_source: data.ecg_frame?.hr_source ?? null,
                 systolic_bp: inserted?.systolic_bp ?? null,
                 diastolic_bp: inserted?.diastolic_bp ?? null,
                 map: inserted?.map ?? null,
@@ -282,7 +420,19 @@ const initMQTT = (io) => {
             // Backward-compatible channel for existing clients
             io.emit(`realtime-${device_id}`, realtimePayload);
 
-            runAiForInsertedRecord({ io, inserted, device });
+            if (shouldRunAiForPayload(data)) {
+                runAiForInsertedRecord({
+                    io,
+                    inserted: data.ecg_ai_window
+                        ? {
+                            ...inserted,
+                            ecg_ai_window: data.ecg_ai_window,
+                            ecg_sampling_rate: data.ecg_ai_window.sampling_rate,
+                        }
+                        : inserted,
+                    device,
+                });
+            }
         } catch (err) {
             markMessageFailure(err.message);
             console.error('❌ Lỗi xử lý MQTT:', err.message);

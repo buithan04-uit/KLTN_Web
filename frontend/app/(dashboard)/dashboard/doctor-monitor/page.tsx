@@ -16,6 +16,27 @@ type RealtimePayload = {
   spo2: number | null;
   temp: number | null;
   ecg: number | null;
+  ecg_points?: number[] | null;
+  ecg_lcd_points?: number[] | null;
+  type?: string;
+  mode?: string;
+  fs?: number | null;
+  n?: number | null;
+  r_peak_index?: number | null;
+  normalized?: boolean | null;
+  mode?: string | null;
+  ecg_unit?: string | null;
+  ecg_source?: string | null;
+  ecg_display?: string | null;
+  ecg_seq?: number | null;
+  ecg_start_ms?: number | null;
+  min_mv?: number | null;
+  max_mv?: number | null;
+  p2p_mv?: number | null;
+  clip_pct?: number | null;
+  hr_ecg?: number | null;
+  hr_ppg?: number | null;
+  hr_source?: string | null;
   session_id?: string | null;
   ts?: string;
   received_at?: number;
@@ -29,6 +50,25 @@ type DoctorHistoryRow = {
   temperature: number | null;
   ecg_value: number | null;
   ecg_points?: number[] | null;
+  ecg_lcd_points?: number[] | null;
+  ecg_sampling_rate?: number | null;
+  r_peak_index?: number | null;
+  normalized?: boolean | null;
+  type?: string | null;
+  mode?: string | null;
+  ecg_unit?: string | null;
+  ecg_source?: string | null;
+  ecg_display?: string | null;
+  ecg_seq?: number | null;
+  ecg_start_ms?: number | null;
+  min_mv?: number | null;
+  max_mv?: number | null;
+  p2p_mv?: number | null;
+  clip_pct?: number | null;
+  hr_ecg?: number | null;
+  hr_ppg?: number | null;
+  hr_source?: string | null;
+  note?: string | null;
   session_id: string | null;
 };
 
@@ -68,6 +108,239 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeNumberArray(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const points = value.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  return points.length ? points : null;
+}
+
+function getEcgDisplayPoints(record?: DoctorHistoryRow | null): Array<number | null> | null {
+  const lcdPoints = normalizeNumberArray(record?.ecg_lcd_points);
+  if (lcdPoints) return lcdPoints;
+  return normalizeNumberArray(record?.ecg_points);
+}
+
+function average(values: number[]): number {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function getEcgQuality(clipPct?: number | null) {
+  if (typeof clipPct !== 'number') {
+    return { label: 'Chua ro chat luong', className: 'bg-slate-100 text-slate-600', hint: 'Firmware chua gui clip_pct cho frame nay.' };
+  }
+  if (clipPct <= 10) {
+    return { label: 'Tin hieu tot', className: 'bg-emerald-100 text-emerald-700', hint: 'It cat bien, co the quan sat dang song.' };
+  }
+  if (clipPct < 30) {
+    return { label: 'Nhieu vua', className: 'bg-amber-100 text-amber-700', hint: 'Xem duoc nhip, han che doc bien do.' };
+  }
+  return { label: 'Cat bien manh', className: 'bg-red-100 text-red-700', hint: 'Khong nen dung de nhan dinh ECG chuyen mon.' };
+}
+
+function getRecordEcgSummary(record: DoctorHistoryRow) {
+  const pointsCount = normalizeNumberArray(record.ecg_points)?.length ?? 0;
+  if (record.type === 'ecg_frame' || record.note === 'ecg_frame') {
+    return {
+      label: `ECG frame${pointsCount ? ` (${pointsCount} mau)` : ''}`,
+      detail: record.clip_pct !== null && record.clip_pct !== undefined ? `clip ${record.clip_pct.toFixed(0)}%` : 'dang song',
+    };
+  }
+  if (record.type === 'ecg_ai_window' || record.note === 'ecg_ai_window_normalized') {
+    return { label: 'AI window', detail: pointsCount ? `${pointsCount} mau` : 'input AI' };
+  }
+  return {
+    label: record.ecg_value !== null && record.ecg_value !== undefined ? record.ecg_value.toFixed(2) : '-',
+    detail: 'raw/debug',
+  };
+}
+
+const ECG_SWEEP_CAPACITY = 1500;
+const ECG_TARGET_DELAY_SECONDS = 0.45;
+const ECG_MAX_DELAY_SECONDS = 0.9;
+const ECG_LCD_INVERT = true;
+
+function EcgSweepCanvas({
+  frames,
+  isLcdDisplay,
+  samplingRate,
+}: {
+  frames: DoctorHistoryRow[];
+  isLcdDisplay: boolean;
+  samplingRate: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const queueRef = useRef<number[]>([]);
+  const seenRef = useRef<Set<string>>(new Set());
+  const bufferRef = useRef<number[]>(Array.from({ length: ECG_SWEEP_CAPACITY }, () => NaN));
+  const cursorRef = useRef(0);
+  const lastFrameTimeRef = useRef<number | null>(null);
+  const sampleCarryRef = useRef(0);
+  const valueRangeRef = useRef({ min: 0, max: 240 });
+  const streamKey = frames.at(-1)?.device_id || frames[0]?.device_id || '';
+
+  useEffect(() => {
+    queueRef.current = [];
+    seenRef.current = new Set();
+    bufferRef.current = Array.from({ length: ECG_SWEEP_CAPACITY }, () => NaN);
+    cursorRef.current = 0;
+    lastFrameTimeRef.current = null;
+    sampleCarryRef.current = 0;
+  }, [streamKey]);
+
+  useEffect(() => {
+    const maxQueuedSamples = Math.max(64, Math.round((samplingRate || 250) * ECG_MAX_DELAY_SECONDS));
+    for (const frame of frames) {
+      const key = `${frame.device_id}|${frame.ecg_seq ?? frame.time}|${frame.ecg_start_ms ?? ''}`;
+      if (seenRef.current.has(key)) continue;
+      seenRef.current.add(key);
+      const points = getEcgDisplayPoints(frame)?.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) || [];
+      if (points.length) queueRef.current.push(...points);
+    }
+    if (queueRef.current.length > maxQueuedSamples) {
+      queueRef.current = queueRef.current.slice(-maxQueuedSamples);
+    }
+    if (seenRef.current.size > 400) {
+      seenRef.current = new Set(Array.from(seenRef.current).slice(-200));
+    }
+  }, [frames, samplingRate]);
+
+  useEffect(() => {
+    let animationId = 0;
+
+    const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number) => {
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, width, height);
+      const minor = 16 * dpr;
+      const major = 80 * dpr;
+      ctx.lineWidth = 1 * dpr;
+      for (let x = 0; x <= width; x += minor) {
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= height; y += minor) {
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+      ctx.lineWidth = 1.25 * dpr;
+      for (let x = 0; x <= width; x += major) {
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= height; y += major) {
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+    };
+
+    const draw = (now: number) => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(1, Math.floor(rect.width * dpr));
+      const height = Math.max(1, Math.floor(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      if (lastFrameTimeRef.current === null) lastFrameTimeRef.current = now;
+      const elapsed = Math.min(0.12, (now - lastFrameTimeRef.current) / 1000);
+      lastFrameTimeRef.current = now;
+      const fs = Math.max(1, samplingRate || 250);
+      const targetQueuedSamples = Math.max(32, Math.round(fs * ECG_TARGET_DELAY_SECONDS));
+      const queueSize = queueRef.current.length;
+      const adaptiveRate = queueSize > targetQueuedSamples * 1.5
+        ? fs * 1.25
+        : queueSize < targetQueuedSamples * 0.45
+          ? fs * 0.82
+          : fs;
+      sampleCarryRef.current += elapsed * adaptiveRate;
+      const consumeCount = Math.min(queueRef.current.length, Math.floor(sampleCarryRef.current));
+      sampleCarryRef.current -= consumeCount;
+
+      for (let i = 0; i < consumeCount; i += 1) {
+        const sample = queueRef.current.shift();
+        if (typeof sample !== 'number') break;
+        bufferRef.current[cursorRef.current] = sample;
+        for (let gap = 1; gap <= 18; gap += 1) {
+          bufferRef.current[(cursorRef.current + gap) % ECG_SWEEP_CAPACITY] = NaN;
+        }
+        cursorRef.current = (cursorRef.current + 1) % ECG_SWEEP_CAPACITY;
+      }
+
+      const finite = bufferRef.current.filter((value) => Number.isFinite(value));
+      if (finite.length && !isLcdDisplay) {
+        const min = Math.min(...finite);
+        const max = Math.max(...finite);
+        const pad = Math.max(0.25, (max - min) * 0.2);
+        valueRangeRef.current = { min: min - pad, max: max + pad };
+      } else if (isLcdDisplay) {
+        valueRangeRef.current = { min: 0, max: 240 };
+      }
+
+      drawGrid(ctx, width, height, dpr);
+      const { min, max } = valueRangeRef.current;
+      const span = Math.max(1, max - min);
+      const xStep = width / (ECG_SWEEP_CAPACITY - 1);
+      ctx.strokeStyle = '#0ea5e9';
+      ctx.lineWidth = 1.8 * dpr;
+      ctx.beginPath();
+      let drawing = false;
+      for (let i = 0; i < ECG_SWEEP_CAPACITY; i += 1) {
+        const value = bufferRef.current[i];
+        if (!Number.isFinite(value)) {
+          drawing = false;
+          continue;
+        }
+        const x = i * xStep;
+        const y = isLcdDisplay
+          ? ECG_LCD_INVERT
+            ? height - (value / 240) * height
+            : (value / 240) * height
+          : height - ((value - min) / span) * height;
+        if (!drawing) {
+          ctx.moveTo(x, y);
+          drawing = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+      const cursorX = cursorRef.current * xStep;
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.25 * dpr;
+      ctx.setLineDash([4 * dpr, 4 * dpr]);
+      ctx.beginPath();
+      ctx.moveTo(cursorX, 0);
+      ctx.lineTo(cursorX, height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      animationId = requestAnimationFrame(draw);
+    };
+
+    animationId = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(animationId);
+  }, [isLcdDisplay, samplingRate]);
+
+  return <canvas ref={canvasRef} className="h-full w-full rounded-xl" />;
+}
+
 function formatNumber(value: number | null, precision = 1): string {
   if (value === null) return '—';
   return Number.isInteger(value) ? String(value) : value.toFixed(precision);
@@ -96,6 +369,37 @@ const AI_STATUS_STYLES: Record<AiStatus, { box: string; text: string; badge: str
   unknown: { box: 'border-slate-200 bg-white', text: 'text-slate-700', badge: 'bg-slate-100 text-slate-600', label: 'Chua du du lieu' },
 };
 
+const ECG_LABELS: Record<string, string> = {
+  N: 'Nhip binh thuong',
+  S: 'Nghi ngoai tam thu tren that',
+  V: 'Nghi ngoai tam thu that',
+  F: 'Nghi nhip ket hop',
+  Q: 'Khong xac dinh',
+};
+
+function formatAiConfidence(value: number | null | undefined) {
+  if (typeof value !== 'number') return 'N/A';
+  return `${Math.round(value * 100)}%`;
+}
+
+function getReadableModelName(modelName: string) {
+  if (modelName === 'vitals-risk-assessment' || modelName === 'vitals-risk') return 'Nguy co sinh hieu';
+  if (modelName === 'ecg-arrhythmia') return 'Dien tim ECG';
+  return modelName;
+}
+
+function getReadablePrediction(modelName: string, label: string, confidence?: number | null) {
+  if (modelName === 'ecg-arrhythmia') {
+    if (typeof confidence === 'number' && confidence < 0.6) return `Chua du tin cay (${label})`;
+    if (/uncertain/i.test(label)) return 'ECG chua du tin cay';
+    if (/possible/i.test(label)) return label.replace(/possible/i, 'Nghi ngo');
+    return ECG_LABELS[label] ? `${label} - ${ECG_LABELS[label]}` : label;
+  }
+  if (/low/i.test(label)) return 'Nguy co thap';
+  if (/high|danger/i.test(label)) return 'Nguy co cao';
+  return label;
+}
+
 function getFieldStatus(
   field: keyof typeof VITAL_CONFIG,
   value: number | null
@@ -118,7 +422,26 @@ function toDoctorHistoryRowFromRealtime(payload: RealtimePayload): DoctorHistory
     spo2: toNumber(payload.spo2),
     temperature: toNumber(payload.temp),
     ecg_value: toNumber(payload.ecg),
-    ecg_points: null,
+    ecg_points: normalizeNumberArray(payload.ecg_points),
+    ecg_lcd_points: normalizeNumberArray(payload.ecg_lcd_points),
+    ecg_sampling_rate: toNumber(payload.fs),
+    r_peak_index: toNumber(payload.r_peak_index),
+    normalized: payload.normalized ?? null,
+    type: payload.type ?? null,
+    mode: payload.mode ?? null,
+    ecg_unit: payload.ecg_unit ?? null,
+    ecg_source: payload.ecg_source ?? null,
+    ecg_display: payload.ecg_display ?? null,
+    ecg_seq: toNumber(payload.ecg_seq),
+    ecg_start_ms: toNumber(payload.ecg_start_ms),
+    min_mv: toNumber(payload.min_mv),
+    max_mv: toNumber(payload.max_mv),
+    p2p_mv: toNumber(payload.p2p_mv),
+    clip_pct: toNumber(payload.clip_pct),
+    hr_ecg: toNumber(payload.hr_ecg),
+    hr_ppg: toNumber(payload.hr_ppg),
+    hr_source: payload.hr_source ?? null,
+    note: payload.type === 'ecg_frame' ? 'ecg_frame' : payload.type === 'ecg_ai_window' ? 'ecg_ai_window_normalized' : null,
     session_id: payload.session_id || null,
   };
 }
@@ -131,6 +454,8 @@ function toHistoryUniqueKey(row: DoctorHistoryRow): string {
     row.spo2 ?? 'n',
     row.temperature ?? 'n',
     row.ecg_value ?? 'n',
+    row.type ?? row.note ?? 'n',
+    row.ecg_seq ?? 'n',
     row.session_id ?? 'n',
   ].join('|');
 }
@@ -207,6 +532,8 @@ export default function DoctorMonitorPage() {
   const [connected, setConnected] = useState(false);
   const [live, setLive] = useState<RealtimePayload | null>(null);
   const [events, setEvents] = useState<RealtimePayload[]>([]);
+  const liveBufferRef = useRef<RealtimePayload | null>(null);
+  const eventsBufferRef = useRef<RealtimePayload[]>([]);
   const [error, setError] = useState('');
   // Read sessions from localStorage via lazy init (same typeof window pattern used in codebase)
   const [sessionsMap, setSessionsMap] = useState<Record<string, SessionEntry>>(() => {
@@ -391,25 +718,43 @@ export default function DoctorMonitorPage() {
 
   const history = useMemo<DoctorHistoryRow[]>(() => {
     if (historyResp?.status !== 200) return [];
-    return (historyResp.data || []).map((row) => ({
-      ...(() => {
-        const rawEcgPoints = (row as { ecg_points?: unknown }).ecg_points;
-        const normalizedEcgPoints = Array.isArray(rawEcgPoints)
-          ? rawEcgPoints.filter((v: unknown): v is number => typeof v === 'number' && Number.isFinite(v))
-          : null;
+    return (historyResp.data || []).map((row) => {
+      const rawEcgPoints = (row as { ecg_points?: unknown }).ecg_points;
+      const normalizedEcgPoints = normalizeNumberArray(rawEcgPoints);
+      const note = (row as { note?: string | null }).note || null;
+      const isAiWindow = note === 'ecg_ai_window_normalized';
+      const isEcgFrame = note === 'ecg_frame';
 
-        return {
-          ecg_points: normalizedEcgPoints,
-        };
-      })(),
-      time: row.time ? new Date(row.time).toISOString() : new Date().toISOString(),
-      device_id: row.device_id || (deviceId || ''),
-      heart_rate: toNumber(row.heart_rate),
-      spo2: toNumber(row.spo2),
-      temperature: toNumber(row.temperature),
-      ecg_value: toNumber(row.ecg_value),
-      session_id: row.session_id || null,
-    }));
+      return {
+        ecg_points: normalizedEcgPoints,
+        ecg_lcd_points: null,
+        time: row.time ? new Date(row.time).toISOString() : new Date().toISOString(),
+        device_id: row.device_id || (deviceId || ''),
+        heart_rate: toNumber(row.heart_rate),
+        spo2: toNumber(row.spo2),
+        temperature: toNumber(row.temperature),
+        ecg_value: toNumber(row.ecg_value),
+        ecg_sampling_rate: null,
+        r_peak_index: normalizedEcgPoints?.length === 100 && isAiWindow ? 50 : null,
+        normalized: isAiWindow,
+        type: isEcgFrame ? 'ecg_frame' : isAiWindow ? 'ecg_ai_window' : null,
+        mode: null,
+        ecg_unit: isEcgFrame ? 'mV' : null,
+        ecg_source: isEcgFrame ? 'mv' : null,
+        ecg_display: null,
+        ecg_seq: null,
+        ecg_start_ms: null,
+        min_mv: null,
+        max_mv: null,
+        p2p_mv: null,
+        clip_pct: null,
+        hr_ecg: null,
+        hr_ppg: null,
+        hr_source: null,
+        note,
+        session_id: row.session_id || null,
+      };
+    });
   }, [historyResp, deviceId]);
 
   const { data: trendResp } = useGetApiHealthTrendsDeviceId(
@@ -460,11 +805,15 @@ export default function DoctorMonitorPage() {
     };
   }, [live, history]);
 
-  const historyWithRealtime = useMemo<DoctorHistoryRow[]>(() => {
-    const realtimeRows = events
+  const realtimeHistoryRows = useMemo<DoctorHistoryRow[]>(
+    () => events
       .filter((e) => e.device_id === deviceId)
-      .map((e) => toDoctorHistoryRowFromRealtime(e));
+      .map((e) => toDoctorHistoryRowFromRealtime(e)),
+    [events, deviceId]
+  );
 
+  const historyWithRealtime = useMemo<DoctorHistoryRow[]>(() => {
+    const realtimeRows = realtimeHistoryRows;
     const merged = [...realtimeRows, ...history];
     const seen = new Set<string>();
     const unique: DoctorHistoryRow[] = [];
@@ -478,7 +827,7 @@ export default function DoctorMonitorPage() {
     }
 
     return unique;
-  }, [events, history, deviceId]);
+  }, [realtimeHistoryRows, history]);
 
   const realtimeChartData = useMemo(
     () =>
@@ -528,20 +877,81 @@ export default function DoctorMonitorPage() {
   );
 
   const doctorEcgData = useMemo(() => {
-    const points = [...historyWithRealtime]
-      .slice(0, 40)
-      .reverse()
-      .flatMap((r) => {
-        const ecgPoints = Array.isArray(r.ecg_points)
-          ? r.ecg_points.filter((v) => typeof v === 'number' && Number.isFinite(v))
-          : [];
-        if (ecgPoints.length) return ecgPoints;
-        return typeof r.ecg_value === 'number' ? [r.ecg_value] : [];
-      })
-      .slice(-300);
+    const frameRecords = realtimeHistoryRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points));
+    const displayFrameRecords = frameRecords;
+    const sweepSlots = new Map<number, { i: number; value: number | null; raw: number | null; order: number }>();
+    let latestCursor = 0;
+    displayFrameRecords.slice(0, 28).reverse().forEach((record, frameIndex) => {
+      const segment = getEcgDisplayPoints(record)?.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) || [];
+      const seq = typeof record.ecg_seq === 'number' ? record.ecg_seq : frameIndex;
+      const base = seq * Math.max(1, segment.length || 64);
+      segment.forEach((raw, sampleIndex) => {
+        const i = ((base + sampleIndex) % ECG_SWEEP_CAPACITY + ECG_SWEEP_CAPACITY) % ECG_SWEEP_CAPACITY;
+        sweepSlots.set(i, { i, value: raw, raw, order: base + sampleIndex });
+        latestCursor = i;
+      });
+    });
+    for (let gap = 1; gap <= 24; gap += 1) {
+      const i = (latestCursor + gap) % ECG_SWEEP_CAPACITY;
+      sweepSlots.set(i, { i, value: null, raw: null, order: Number.MAX_SAFE_INTEGER });
+    }
+    return Array.from(sweepSlots.values()).sort((a, b) => a.i - b.i);
+  }, [realtimeHistoryRows]);
 
-    return points.map((value, i) => ({ i, value }));
-  }, [historyWithRealtime]);
+  const doctorEcgFrames = useMemo(
+    () => realtimeHistoryRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points)),
+    [realtimeHistoryRows]
+  );
+
+  const doctorEcgMeta = useMemo(() => {
+    const frameRecords = realtimeHistoryRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points));
+    const latestFrameRecord = frameRecords[0];
+    const displayFrameRecords = frameRecords;
+    const latestWaveRecord = latestFrameRecord;
+    const rawNumericPoints = doctorEcgData.map((point) => point.value).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    const isFrame = latestWaveRecord?.type === 'ecg_frame';
+    const isAiWindow = false;
+    const values = doctorEcgData.length ? doctorEcgData.map((p) => p.value) : [0];
+    const baseline = isAiWindow || isFrame ? 0 : average(rawNumericPoints);
+    const numericValues = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    if (!numericValues.length) numericValues.push(0);
+    const yMin = Math.min(...numericValues);
+    const yMax = Math.max(...numericValues);
+    const padY = Math.max(0.25, (yMax - yMin) * 0.2);
+    return {
+      isFrame,
+      isAiWindow,
+      baseline,
+      isLcdDisplay: Boolean(isFrame && normalizeNumberArray(latestWaveRecord?.ecg_lcd_points)),
+      unit: isFrame && normalizeNumberArray(latestWaveRecord?.ecg_lcd_points)
+        ? 'LCD px'
+        : latestWaveRecord?.ecg_unit || 'mV',
+      rPeakIndex: typeof latestWaveRecord?.r_peak_index === 'number'
+        ? latestWaveRecord.r_peak_index
+        : null,
+      samplingRate: latestWaveRecord?.ecg_sampling_rate ?? 250,
+      mode: latestWaveRecord?.mode ?? (isFrame ? 'ecg' : null),
+      sampleCount: Math.min(rawNumericPoints.length, ECG_SWEEP_CAPACITY),
+      cursor: (() => {
+        const latestSegment = getEcgDisplayPoints(latestWaveRecord)?.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) || [];
+        const seq = typeof latestWaveRecord?.ecg_seq === 'number' ? latestWaveRecord.ecg_seq : 0;
+        const base = seq * Math.max(1, latestSegment.length || 64);
+        return latestSegment.length
+          ? ((base + latestSegment.length - 1) % ECG_SWEEP_CAPACITY + ECG_SWEEP_CAPACITY) % ECG_SWEEP_CAPACITY
+          : 0;
+      })(),
+      heartRate: latestWaveRecord?.heart_rate ?? null,
+      p2pMv: latestWaveRecord?.p2p_mv ?? null,
+      clipPct: latestWaveRecord?.clip_pct ?? null,
+      hrSource: latestWaveRecord?.hr_source ?? null,
+      yDomain: isAiWindow
+        ? [-8, 8] as [number, number]
+        : isFrame && normalizeNumberArray(latestWaveRecord?.ecg_lcd_points)
+          ? [-240, 0] as [number, number]
+        : [yMin - padY, yMax + padY] as [number, number],
+      quality: getEcgQuality(latestWaveRecord?.clip_pct),
+    };
+  }, [doctorEcgData, realtimeHistoryRows]);
 
   useEffect(() => {
     if (!deviceId || !consentToken || !user || (user.role !== 'doctor' && user.role !== 'admin')) return;
@@ -593,8 +1003,8 @@ export default function DoctorMonitorPage() {
     socket.on('vitals', (payload: RealtimePayload) => {
       const parsedTs = payload.ts ? new Date(payload.ts).getTime() : NaN;
       const next = { ...payload, received_at: Number.isFinite(parsedTs) ? parsedTs : Date.now() };
-      setLive(next);
-      setEvents((prev) => [next, ...prev].slice(0, 120));
+      liveBufferRef.current = next;
+      eventsBufferRef.current = [next, ...eventsBufferRef.current].slice(0, 80);
     });
 
     socket.on('device-status', (payload: { device_id: string; status: string }) => {
@@ -609,7 +1019,21 @@ export default function DoctorMonitorPage() {
       if (revokedDeviceId) removeSession(revokedDeviceId);
     });
 
+    const flushTimer = window.setInterval(() => {
+      const nextLive = liveBufferRef.current;
+      const nextEvents = eventsBufferRef.current;
+      if (nextLive) {
+        setLive(nextLive);
+        liveBufferRef.current = null;
+      }
+      if (nextEvents.length) {
+        setEvents((prev) => [...nextEvents, ...prev].slice(0, 160));
+        eventsBufferRef.current = [];
+      }
+    }, 150);
+
     return () => {
+      window.clearInterval(flushTimer);
       socket.disconnect();
       socketRef.current = null;
     };
@@ -886,20 +1310,34 @@ export default function DoctorMonitorPage() {
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
-        <h2 className="text-lg font-semibold text-slate-800 mb-3">ECG (điện tim)</h2>
-        {!doctorEcgData.length ? (
-          <p className="text-sm text-slate-500">Chưa có dữ liệu ECG realtime.</p>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold text-slate-800">ECG (điện tim)</h2>
+          {doctorEcgMeta.isFrame && <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${doctorEcgMeta.quality.className}`}>{doctorEcgMeta.quality.label}</span>}
+          <span className="ml-auto text-xs text-slate-500">
+            {doctorEcgMeta.isFrame
+              ? `${doctorEcgMeta.sampleCount} mau ECG | ${doctorEcgMeta.isLcdDisplay ? 'LCD' : 'mV'} | ${doctorEcgMeta.mode ?? 'ecg'} | ${doctorEcgMeta.samplingRate}Hz | HR ${doctorEcgMeta.heartRate ?? '-'}`
+              : 'Dang cho ECG frame realtime'}
+          </span>
+        </div>
+        {!doctorEcgFrames.length ? (
+          <p className="text-sm text-slate-500">Chưa có ecg_frame realtime để vẽ sóng ECG.</p>
         ) : (
-          <div className="h-28 w-full rounded-xl border border-slate-100 bg-slate-50 p-3">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={doctorEcgData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="i" hide />
-                <YAxis stroke="#64748b" width={32} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(v) => [`${Number(v).toFixed(3)} mV`, 'ECG']} />
-                <Line type="monotone" dataKey="value" name="ECG" stroke="#0ea5e9" strokeWidth={1.8} dot={false} connectNulls />
-              </LineChart>
-            </ResponsiveContainer>
+          <div
+            className={`${doctorEcgMeta.isAiWindow ? 'mx-auto max-w-5xl' : 'w-full'} h-64 rounded-xl border border-slate-100 p-3`}
+          >
+            <EcgSweepCanvas
+              frames={doctorEcgFrames.slice(0, 80).reverse()}
+              isLcdDisplay={doctorEcgMeta.isLcdDisplay}
+              samplingRate={doctorEcgMeta.samplingRate}
+            />
+          </div>
+        )}
+        {doctorEcgMeta.isFrame && (
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 md:grid-cols-4">
+            <span>Biên độ đỉnh-đỉnh: <b>{doctorEcgMeta.p2pMv?.toFixed?.(0) ?? '-'} mV</b></span>
+            <span>Cắt biên: <b>{doctorEcgMeta.clipPct?.toFixed?.(0) ?? '-'}%</b></span>
+            <span>Nguồn nhịp: <b>{doctorEcgMeta.hrSource || '-'}</b></span>
+            <span>{doctorEcgMeta.quality.hint}</span>
           </div>
         )}
       </section>
@@ -949,7 +1387,7 @@ export default function DoctorMonitorPage() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold text-slate-800">AI chan doan tong hop</h2>
+                <h2 className="text-lg font-semibold text-slate-800">AI danh gia nguy co sinh hieu</h2>
                 <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].badge}`}>
                   {AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].label}
                 </span>
@@ -959,7 +1397,7 @@ export default function DoctorMonitorPage() {
               </p>
               {aiSummary?.summary && <p className="mt-1 text-sm text-slate-600">{aiSummary.summary}</p>}
               {aiSummary?.status_reason && <p className="mt-1 text-xs text-slate-500">Ly do: {aiSummary.status_reason}</p>}
-              <p className="mt-1 text-xs text-slate-500">Chi hien thi khi co du lieu doi chieu day du.</p>
+              <p className="mt-1 text-xs text-slate-500">Rule-based co the chay voi du lieu cam bien; model full can du ho so va huyet ap nhap ngoai.</p>
             </div>
           </div>
           <div className="text-right text-xs text-slate-500">
@@ -972,32 +1410,36 @@ export default function DoctorMonitorPage() {
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
             {Object.entries(aiSummary.models).map(([modelName, model]) => {
               const styles = AI_STATUS_STYLES[model.status];
-              const confidence = typeof model.latest.confidence === 'number'
-                ? `${Math.round(model.latest.confidence * 100)}%`
-                : 'N/A';
+              const confidence = formatAiConfidence(model.latest.confidence);
               return (
                 <div key={modelName} className="rounded-xl border border-white/80 bg-white/80 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold text-slate-700">
-                      {modelName === 'vitals-risk' ? 'Sinh hieu tong hop' : modelName === 'ecg-arrhythmia' ? 'ECG arrhythmia' : modelName}
+                      {getReadableModelName(modelName)}
                     </span>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}>{styles.label}</span>
                   </div>
                   <div className="mt-2 flex items-end gap-2">
-                    <span className={`text-xl font-bold ${styles.text}`}>{model.latest.prediction_label}</span>
-                    <span className="text-xs text-slate-500 mb-1">confidence {confidence}</span>
+                    <span className={`text-xl font-bold ${styles.text}`}>
+                      {getReadablePrediction(modelName, model.latest.prediction_label, model.latest.confidence)}
+                    </span>
+                    <span className="text-xs text-slate-500 mb-1">tin cay {confidence}</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">Ket qua de bac si tham khao, khong phai canh bao tung mau realtime.</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {modelName === 'ecg-arrhythmia'
+                      ? 'Chi danh gia beat ECG du dieu kien; khong ket luan benh ly khi tin hieu bi cat bien hoac nhieu.'
+                      : 'Tong hop sinh hieu gan day de uu tien theo doi, khong thay the chan doan y khoa.'}
+                  </p>
                 </div>
               );
             })}
           </div>
         )}
         <p className="mt-4 text-xs text-slate-500">
-          {aiSummary?.disclaimer || 'AI chi ho tro tham khao, can doi chieu voi lam sang va du lieu do thuc te.'}
+          {aiSummary?.disclaimer || 'AI chi ho tro theo doi nguy co sinh hieu, can doi chieu voi lam sang va du lieu do thuc te.'}
         </p>
         <a href="/dashboard/ai-diagnosis" className="mt-3 inline-flex text-sm font-semibold text-sky-700 hover:text-sky-800">
-          Xem lich su AI va du lieu dau vao
+          Xem lich su danh gia va du lieu dau vao
         </a>
       </section>
 
@@ -1089,7 +1531,17 @@ export default function DoctorMonitorPage() {
                     <td className="px-3 py-2 text-right">{r.heart_rate ?? '—'}</td>
                     <td className="px-3 py-2 text-right">{r.spo2 ?? '—'}</td>
                     <td className="px-3 py-2 text-right">{r.temperature ?? '—'}</td>
-                    <td className="px-3 py-2 text-right">{r.ecg_value ?? '—'}</td>
+                    <td className="px-3 py-2 text-right text-xs">
+                      {(() => {
+                        const ecg = getRecordEcgSummary(r);
+                        return (
+                          <div>
+                            <div className="font-semibold text-slate-700">{ecg.label}</div>
+                            <div className="text-slate-400">{ecg.detail}</div>
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="px-3 py-2 font-mono text-xs">{r.session_id ?? '—'}</td>
                   </tr>
                 ))}

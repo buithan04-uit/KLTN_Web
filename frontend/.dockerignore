@@ -1,0 +1,33 @@
+# Dependency/cache/build output
+node_modules
+.next
+out
+dist
+coverage
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+next-*.log
+
+# Git/editor/OS noise
+.git
+.gitignore
+.vscode
+.idea
+Thumbs.db
+.DS_Store
+
+# Local/generated docs not needed for Next build/runtime
+README.md
+openapi.json
+orval.config.ts
+tsconfig.tsbuildinfo

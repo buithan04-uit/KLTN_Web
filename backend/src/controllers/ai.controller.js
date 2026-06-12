@@ -38,7 +38,7 @@ const getPredictionStatus = (modelName, label, confidence = null) => {
 
     if (!normalized) return 'unknown';
 
-    if (modelName === 'vitals-risk') {
+    if (modelName === 'vitals-risk' || modelName === 'vitals-risk-assessment') {
         if (lower.includes('high') || lower.includes('danger') || lower.includes('risk cao')) {
             return !hasConfidence || conf >= 0.75 ? 'danger' : 'warning';
         }
@@ -48,6 +48,8 @@ const getPredictionStatus = (modelName, label, confidence = null) => {
     }
 
     if (modelName === 'ecg-arrhythmia') {
+        if (lower.includes('uncertain') || lower.includes('low_confidence')) return 'unknown';
+        if (lower.includes('possible')) return 'warning';
         if (normalized === 'N' || lower.includes('normal')) return 'normal';
         if (['V', 'F'].includes(normalized)) {
             if (hasConfidence && conf < 0.6) return 'unknown';
@@ -164,10 +166,24 @@ const buildAiSummary = (predictions, limit) => {
         unknown: 'Cần thêm dữ liệu sinh hiệu/ECG hợp lệ để AI có thể đánh giá.',
     };
 
+    const riskHeadlineByStatus = {
+        danger: 'Can chu y: AI ghi nhan nguy co sinh hieu cao trong cua so du lieu gan day',
+        warning: 'Theo doi them: AI ghi nhan mot so dau hieu sinh hieu can doi chieu',
+        normal: 'On dinh: AI chua ghi nhan nguy co sinh hieu ro trong cua so du lieu gan day',
+        unknown: 'Chua du du lieu de tong hop danh gia nguy co AI',
+    };
+
+    const riskSummaryByStatus = {
+        danger: 'Ket qua duoc tong hop tu rule-based score va mo hinh khi du du lieu; khong phai canh bao chan doan tuc thoi.',
+        warning: 'Can doi chieu voi trieu chung, tien su benh, tinh trang cam bien va du lieu do thuc te.',
+        normal: 'Tiep tuc theo doi dinh ky; ket qua AI chi co gia tri ho tro theo doi.',
+        unknown: 'Can them du lieu sinh hieu hop le de AI co the danh gia nguy co.',
+    };
+
     return {
         overall_status,
-        headline: headlineByStatus[overall_status],
-        summary: summaryByStatus[overall_status],
+        headline: riskHeadlineByStatus[overall_status],
+        summary: riskSummaryByStatus[overall_status],
         status_reason: statusFromDistribution({
             danger: overallCounts.danger,
             warning: overallCounts.warning,
@@ -249,6 +265,47 @@ const predictLatest = async (req, res) => {
     }
 };
 
+const recordManualBloodPressure = async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const access = await canAccessDevice(req, deviceId);
+        if (!access.ok) {
+            return res.status(access.status).json({ error: access.error });
+        }
+
+        const systolic = Number(req.body?.systolic_bp ?? req.body?.systolic);
+        const diastolic = Number(req.body?.diastolic_bp ?? req.body?.diastolic);
+
+        if (!Number.isFinite(systolic) || systolic < 50 || systolic > 260) {
+            return res.status(400).json({ error: 'Huyet ap tam thu phai nam trong khoang 50-260 mmHg' });
+        }
+        if (!Number.isFinite(diastolic) || diastolic < 30 || diastolic > 180) {
+            return res.status(400).json({ error: 'Huyet ap tam truong phai nam trong khoang 30-180 mmHg' });
+        }
+        if (diastolic >= systolic) {
+            return res.status(400).json({ error: 'Huyet ap tam truong phai nho hon huyet ap tam thu' });
+        }
+
+        const map = (systolic + 2 * diastolic) / 3;
+        const inserted = await HealthModel.attachManualBloodPressureToLatest({
+            device_id: deviceId,
+            systolic_bp: systolic,
+            diastolic_bp: diastolic,
+            map,
+        });
+
+        return res.status(201).json({
+            data: inserted,
+            source: 'manual_input',
+            message: 'Da luu huyet ap nhap ngoai cho thiet bi',
+            disclaimer: aiService.AI_DISCLAIMER,
+        });
+    } catch (err) {
+        console.error('recordManualBloodPressure AI error:', err.message);
+        return res.status(500).json({ error: 'Loi server' });
+    }
+};
+
 const listPredictions = async (req, res) => {
     try {
         const { deviceId } = req.params;
@@ -306,6 +363,7 @@ const getSummary = async (req, res) => {
 module.exports = {
     getStatus,
     predictLatest,
+    recordManualBloodPressure,
     listPredictions,
     getSummary,
 };

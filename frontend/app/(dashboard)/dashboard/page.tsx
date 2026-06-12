@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
@@ -25,8 +25,262 @@ type RealtimeVitalsPayload = {
   spo2?: number | null;
   temp?: number | null;
   ecg?: number | null;
+  ecg_points?: number[] | null;
+  ecg_lcd_points?: number[] | null;
+  type?: string;
+  mode?: string;
+  fs?: number | null;
+  n?: number | null;
+  r_peak_index?: number | null;
+  normalized?: boolean | null;
+  ecg_unit?: string | null;
+  ecg_source?: string | null;
+  ecg_display?: string | null;
+  ecg_seq?: number | null;
+  ecg_start_ms?: number | null;
+  min_mv?: number | null;
+  max_mv?: number | null;
+  p2p_mv?: number | null;
+  clip_pct?: number | null;
+  hr_ecg?: number | null;
+  hr_ppg?: number | null;
+  hr_source?: string | null;
   ts?: string;
 };
+
+function normalizeNumberArray(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const points = value.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  return points.length ? points : null;
+}
+
+function getEcgDisplayPoints(record?: HealthRecord | null): Array<number | null> | null {
+  const lcdPoints = normalizeNumberArray(record?.ecg_lcd_points);
+  if (lcdPoints) return lcdPoints;
+  return normalizeNumberArray(record?.ecg_points);
+}
+
+function average(values: number[]): number {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function getEcgQuality(clipPct?: number | null) {
+  if (typeof clipPct !== 'number') {
+    return { label: 'Chưa rõ chất lượng', className: 'bg-slate-100 text-slate-600', hint: 'Chưa có clip_pct từ firmware.' };
+  }
+  if (clipPct <= 10) {
+    return { label: 'Tín hiệu tốt', className: 'bg-emerald-100 text-emerald-700', hint: 'Ít cắt biên, có thể quan sát dạng sóng.' };
+  }
+  if (clipPct < 30) {
+    return { label: 'Nhiễu vừa', className: 'bg-amber-100 text-amber-700', hint: 'Vẫn xem được nhịp, hạn chế đọc biên độ.' };
+  }
+  return { label: 'Cắt biên mạnh', className: 'bg-red-100 text-red-700', hint: 'Không nên dùng để nhận định ECG chuyên môn.' };
+}
+
+function getRecordEcgSummary(record: HealthRecord) {
+  const pointsCount = normalizeNumberArray(record.ecg_points)?.length ?? 0;
+  const type = record.type || (record.note === 'ecg_frame' ? 'ecg_frame' : record.note === 'ecg_ai_window_normalized' ? 'ecg_ai_window' : null);
+  if (type === 'ecg_frame') {
+    return {
+      label: `ECG frame${pointsCount ? ` (${pointsCount} mau)` : ''}`,
+      detail: record.clip_pct !== null && record.clip_pct !== undefined ? `clip ${record.clip_pct.toFixed(0)}%` : 'dang song',
+    };
+  }
+  if (type === 'ecg_ai_window') {
+    return { label: 'AI window', detail: pointsCount ? `${pointsCount} mau` : 'input AI' };
+  }
+  return {
+    label: record.ecg_value !== null && record.ecg_value !== undefined ? record.ecg_value.toFixed(2) : '-',
+    detail: 'raw/debug',
+  };
+}
+
+const ECG_SWEEP_CAPACITY = 1500;
+const ECG_TARGET_DELAY_SECONDS = 0.45;
+const ECG_MAX_DELAY_SECONDS = 0.9;
+const ECG_LCD_INVERT = true;
+
+function EcgSweepCanvas({
+  frames,
+  isLcdDisplay,
+  samplingRate,
+}: {
+  frames: HealthRecord[];
+  isLcdDisplay: boolean;
+  samplingRate: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const queueRef = useRef<number[]>([]);
+  const seenRef = useRef<Set<string>>(new Set());
+  const bufferRef = useRef<number[]>(Array.from({ length: ECG_SWEEP_CAPACITY }, () => NaN));
+  const cursorRef = useRef(0);
+  const lastFrameTimeRef = useRef<number | null>(null);
+  const sampleCarryRef = useRef(0);
+  const valueRangeRef = useRef({ min: 0, max: 240 });
+  const streamKey = frames.at(-1)?.device_id || frames[0]?.device_id || '';
+
+  useEffect(() => {
+    queueRef.current = [];
+    seenRef.current = new Set();
+    bufferRef.current = Array.from({ length: ECG_SWEEP_CAPACITY }, () => NaN);
+    cursorRef.current = 0;
+    lastFrameTimeRef.current = null;
+    sampleCarryRef.current = 0;
+  }, [streamKey]);
+
+  useEffect(() => {
+    const maxQueuedSamples = Math.max(64, Math.round((samplingRate || 250) * ECG_MAX_DELAY_SECONDS));
+    for (const frame of frames) {
+      const key = `${frame.device_id}|${frame.ecg_seq ?? frame.time}|${frame.ecg_start_ms ?? ''}`;
+      if (seenRef.current.has(key)) continue;
+      seenRef.current.add(key);
+      const points = getEcgDisplayPoints(frame)?.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) || [];
+      if (points.length) queueRef.current.push(...points);
+    }
+    if (queueRef.current.length > maxQueuedSamples) {
+      queueRef.current = queueRef.current.slice(-maxQueuedSamples);
+    }
+    if (seenRef.current.size > 400) {
+      seenRef.current = new Set(Array.from(seenRef.current).slice(-200));
+    }
+  }, [frames, samplingRate]);
+
+  useEffect(() => {
+    let animationId = 0;
+
+    const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number) => {
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, width, height);
+      const minor = 16 * dpr;
+      const major = 80 * dpr;
+      ctx.lineWidth = 1 * dpr;
+      for (let x = 0; x <= width; x += minor) {
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= height; y += minor) {
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+      ctx.lineWidth = 1.25 * dpr;
+      for (let x = 0; x <= width; x += major) {
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= height; y += major) {
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+    };
+
+    const draw = (now: number) => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(1, Math.floor(rect.width * dpr));
+      const height = Math.max(1, Math.floor(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      if (lastFrameTimeRef.current === null) lastFrameTimeRef.current = now;
+      const elapsed = Math.min(0.12, (now - lastFrameTimeRef.current) / 1000);
+      lastFrameTimeRef.current = now;
+      const fs = Math.max(1, samplingRate || 250);
+      const targetQueuedSamples = Math.max(32, Math.round(fs * ECG_TARGET_DELAY_SECONDS));
+      const queueSize = queueRef.current.length;
+      const adaptiveRate = queueSize > targetQueuedSamples * 1.5
+        ? fs * 1.25
+        : queueSize < targetQueuedSamples * 0.45
+          ? fs * 0.82
+          : fs;
+      sampleCarryRef.current += elapsed * adaptiveRate;
+      const consumeCount = Math.min(queueRef.current.length, Math.floor(sampleCarryRef.current));
+      sampleCarryRef.current -= consumeCount;
+
+      for (let i = 0; i < consumeCount; i += 1) {
+        const sample = queueRef.current.shift();
+        if (typeof sample !== 'number') break;
+        bufferRef.current[cursorRef.current] = sample;
+        for (let gap = 1; gap <= 18; gap += 1) {
+          bufferRef.current[(cursorRef.current + gap) % ECG_SWEEP_CAPACITY] = NaN;
+        }
+        cursorRef.current = (cursorRef.current + 1) % ECG_SWEEP_CAPACITY;
+      }
+
+      const finite = bufferRef.current.filter((value) => Number.isFinite(value));
+      if (finite.length && !isLcdDisplay) {
+        const min = Math.min(...finite);
+        const max = Math.max(...finite);
+        const pad = Math.max(0.25, (max - min) * 0.2);
+        valueRangeRef.current = { min: min - pad, max: max + pad };
+      } else if (isLcdDisplay) {
+        valueRangeRef.current = { min: 0, max: 240 };
+      }
+
+      drawGrid(ctx, width, height, dpr);
+      const { min, max } = valueRangeRef.current;
+      const span = Math.max(1, max - min);
+      const xStep = width / (ECG_SWEEP_CAPACITY - 1);
+      ctx.strokeStyle = '#0ea5e9';
+      ctx.lineWidth = 1.8 * dpr;
+      ctx.beginPath();
+      let drawing = false;
+      for (let i = 0; i < ECG_SWEEP_CAPACITY; i += 1) {
+        const value = bufferRef.current[i];
+        if (!Number.isFinite(value)) {
+          drawing = false;
+          continue;
+        }
+        const x = i * xStep;
+        const y = isLcdDisplay
+          ? ECG_LCD_INVERT
+            ? height - (value / 240) * height
+            : (value / 240) * height
+          : height - ((value - min) / span) * height;
+        if (!drawing) {
+          ctx.moveTo(x, y);
+          drawing = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+      const cursorX = cursorRef.current * xStep;
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.25 * dpr;
+      ctx.setLineDash([4 * dpr, 4 * dpr]);
+      ctx.beginPath();
+      ctx.moveTo(cursorX, 0);
+      ctx.lineTo(cursorX, height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      animationId = requestAnimationFrame(draw);
+    };
+
+    animationId = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(animationId);
+  }, [isLcdDisplay, samplingRate]);
+
+  return <canvas ref={canvasRef} className="h-full w-full rounded-xl" />;
+}
 
 function toRealtimeHealthRecord(payload: RealtimeVitalsPayload, fallbackDeviceId: string): HealthRecord {
   const ts = payload.ts && !Number.isNaN(new Date(payload.ts).getTime())
@@ -40,9 +294,28 @@ function toRealtimeHealthRecord(payload: RealtimeVitalsPayload, fallbackDeviceId
     spo2: typeof payload.spo2 === 'number' ? payload.spo2 : null,
     temperature: typeof payload.temp === 'number' ? payload.temp : null,
     ecg_value: typeof payload.ecg === 'number' ? payload.ecg : null,
+    ecg_points: normalizeNumberArray(payload.ecg_points),
+    ecg_lcd_points: normalizeNumberArray(payload.ecg_lcd_points),
+    ecg_sampling_rate: typeof payload.fs === 'number' ? payload.fs : null,
+    r_peak_index: typeof payload.r_peak_index === 'number' ? payload.r_peak_index : null,
+    normalized: payload.normalized ?? null,
+    type: payload.type ?? null,
+    mode: payload.mode ?? null,
+    ecg_unit: payload.ecg_unit ?? null,
+    ecg_source: payload.ecg_source ?? null,
+    ecg_display: payload.ecg_display ?? null,
+    ecg_seq: typeof payload.ecg_seq === 'number' ? payload.ecg_seq : null,
+    ecg_start_ms: typeof payload.ecg_start_ms === 'number' ? payload.ecg_start_ms : null,
+    min_mv: typeof payload.min_mv === 'number' ? payload.min_mv : null,
+    max_mv: typeof payload.max_mv === 'number' ? payload.max_mv : null,
+    p2p_mv: typeof payload.p2p_mv === 'number' ? payload.p2p_mv : null,
+    clip_pct: typeof payload.clip_pct === 'number' ? payload.clip_pct : null,
+    hr_ecg: typeof payload.hr_ecg === 'number' ? payload.hr_ecg : null,
+    hr_ppg: typeof payload.hr_ppg === 'number' ? payload.hr_ppg : null,
+    hr_source: payload.hr_source ?? null,
     session_id: null,
     is_abnormal: false,
-    note: null,
+    note: payload.type === 'ecg_frame' ? 'ecg_frame' : payload.type === 'ecg_ai_window' ? 'ecg_ai_window_normalized' : null,
   };
 }
 
@@ -54,6 +327,8 @@ function healthRecordKey(r: HealthRecord): string {
     r.spo2 ?? 'n',
     r.temperature ?? 'n',
     r.ecg_value ?? 'n',
+    r.type ?? r.note ?? 'n',
+    r.ecg_seq ?? 'n',
   ].join('|');
 }
 
@@ -151,38 +426,52 @@ function VitalCard({ label, value, field, icon, data, dataKey }: VitalCardProps)
 
 // ─── ECG mini chart ────────────────────────────────────────────────────────────
 function EcgCard({ data }: { data: HealthRecord[] }) {
-  const chartData = data
-    .slice(-20)
-    .flatMap((r) => {
-      const points = Array.isArray(r.ecg_points)
-        ? r.ecg_points.filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
-        : [];
-      if (points.length > 0) return points;
-      return typeof r.ecg_value === 'number' ? [r.ecg_value] : [];
-    })
-    .slice(-240)
-    .map((value, i) => ({ i, value }));
+  const frameRecords = data.filter((r) => (r.type === 'ecg_frame' || r.note === 'ecg_frame') && Array.isArray(r.ecg_points));
+  const latestFrameRecord = frameRecords.at(-1);
+  const displayFrameRecords = frameRecords;
+  const latestWaveRecord = latestFrameRecord;
+  const isFrame = latestWaveRecord?.type === 'ecg_frame' || latestWaveRecord?.note === 'ecg_frame';
+  const numericPoints = displayFrameRecords
+    .flatMap((record) => getEcgDisplayPoints(record)?.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) || []);
+  const visibleSampleCount = Math.min(numericPoints.length, ECG_SWEEP_CAPACITY);
+  const isLcdDisplay = Boolean(isFrame && normalizeNumberArray(latestWaveRecord?.ecg_lcd_points));
+  const unit = isLcdDisplay ? 'LCD px' : latestWaveRecord?.ecg_unit || 'mV';
+  const quality = getEcgQuality(latestWaveRecord?.clip_pct);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 col-span-full">
       <div className="flex items-center gap-2.5 mb-3">
         <Activity className="w-5 h-5 text-sky-500" />
         <span className="text-sm font-semibold text-slate-700">ECG (điện tim)</span>
-        <span className="ml-auto text-xs text-slate-400">{data.length} điểm gần nhất</span>
+        {isFrame && <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${quality.className}`}>{quality.label}</span>}
+        <span className="ml-auto text-xs text-slate-400">
+          {isFrame
+            ? `${visibleSampleCount} mau ECG | ${isLcdDisplay ? 'LCD' : 'mV'} | ${latestWaveRecord?.mode ?? 'ecg'} | ${latestWaveRecord?.ecg_sampling_rate ?? 250}Hz | HR ${latestWaveRecord?.heart_rate ?? '-'}`
+            : 'Dang cho ECG frame realtime'}
+        </span>
       </div>
-      <div className="h-24">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 2, right: 4, left: -28, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis dataKey="i" hide />
-            <YAxis tick={{ fontSize: 9 }} />
-            <Tooltip
-              contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
-              formatter={(v) => [`${(v as number)?.toFixed(3)} mV`, 'ECG']}
-            />
-            <Line type="monotone" dataKey="value" stroke="#0ea5e9" dot={false} strokeWidth={1.5} connectNulls />
-          </LineChart>
-        </ResponsiveContainer>
+      {!numericPoints.length ? (
+        <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+          Chưa có ecg_frame realtime để vẽ sóng ECG.
+        </div>
+      ) : (
+      <div
+        className="h-64 w-full rounded-xl border border-slate-100"
+      >
+        <EcgSweepCanvas
+          frames={displayFrameRecords.slice(-80)}
+          isLcdDisplay={isLcdDisplay}
+          samplingRate={latestWaveRecord?.ecg_sampling_rate ?? 250}
+        />
       </div>
+      )}
+      {isFrame && (
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 md:grid-cols-4">
+          <span>Biên độ đỉnh-đỉnh: <b>{latestWaveRecord?.p2p_mv?.toFixed?.(0) ?? '-'} mV</b></span>
+          <span>Cắt biên: <b>{latestWaveRecord?.clip_pct?.toFixed?.(0) ?? '-'}%</b></span>
+          <span>Nguồn nhịp: <b>{latestWaveRecord?.hr_source || '-'}</b></span>
+          <span>{quality.hint}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -224,7 +513,10 @@ function RecordsTable({ records }: { records: HealthRecord[] }) {
                   {r.temperature?.toFixed(1) ?? '—'} <span className="text-slate-400 text-xs">°C</span>
                 </td>
                 <td className="px-4 py-3 text-right font-mono text-slate-700 text-xs">
-                  {r.ecg_value?.toFixed(3) ?? '—'}
+                  {(() => {
+                    const ecg = getRecordEcgSummary(r);
+                    return `${ecg.label} | ${ecg.detail}`;
+                  })()}
                 </td>
                 <td className="px-4 py-3 text-center">
                   {r.is_abnormal ? (
@@ -269,19 +561,36 @@ const ECG_LABELS: Record<string, string> = {
 
 function getReadableAiLabel(modelName: string, label: string) {
   if (modelName === 'ecg-arrhythmia') {
+    if (/uncertain/i.test(label)) return 'ECG chưa đủ tin cậy';
+    if (/possible/i.test(label)) return label.replace(/possible/i, 'Nghi ngờ');
     return ECG_LABELS[label] ? `${label} - ${ECG_LABELS[label]}` : label;
   }
-  if (modelName === 'vitals-risk') {
+  if (modelName === 'vitals-risk' || modelName === 'vitals-risk-assessment') {
     if (/low/i.test(label)) return 'Low Risk - Ổn định';
     if (/high/i.test(label)) return 'High Risk - Nguy cơ cao';
   }
   return label;
 }
 
-function normalizeModelStatus(modelName: string, label: string, status: AiStatus): AiStatus {
-  if (modelName === 'vitals-risk') {
+function getReadableAiLabelWithConfidence(modelName: string, label: string, confidence?: number | null) {
+  if (modelName === 'ecg-arrhythmia' && typeof confidence === 'number' && confidence < 0.6) {
+    return `Chưa đủ tin cậy (${label})`;
+  }
+  return getReadableAiLabel(modelName, label);
+}
+
+function normalizeModelStatus(modelName: string, label: string, status: AiStatus, confidence?: number | null): AiStatus {
+  const hasConfidence = typeof confidence === 'number';
+  if (modelName === 'vitals-risk' || modelName === 'vitals-risk-assessment') {
     if (/low|normal/i.test(label)) return 'normal';
     if (/high|danger/i.test(label)) return 'danger';
+  }
+  if (modelName === 'ecg-arrhythmia') {
+    if (/uncertain/i.test(label)) return 'unknown';
+    if (/possible/i.test(label)) return 'warning';
+    if (label === 'N' || /normal/i.test(label)) return 'normal';
+    if ((label === 'V' || label === 'F') && hasConfidence && confidence < 0.6) return 'unknown';
+    if ((label === 'S' || label === 'Q') && hasConfidence && confidence < 0.6) return 'unknown';
   }
   return status;
 }
@@ -297,13 +606,13 @@ function AiSummaryPanel({ summary, loading, error }: { summary?: AiSummary; load
   const status = summary?.overall_status ?? 'unknown';
   const styles = AI_STATUS_STYLES[status];
   const models = summary ? Object.entries(summary.models) : [];
-  const vitalsModel = summary?.models['vitals-risk'];
+  const vitalsModel = summary?.models['vitals-risk-assessment'] || summary?.models['vitals-risk'];
   const ecgModel = summary?.models['ecg-arrhythmia'];
   const vitalsStatus = vitalsModel
-    ? normalizeModelStatus('vitals-risk', vitalsModel.latest.prediction_label, vitalsModel.status)
+    ? normalizeModelStatus(vitalsModel.latest.model_name, vitalsModel.latest.prediction_label, vitalsModel.status, vitalsModel.latest.confidence)
     : undefined;
   const ecgStatus = ecgModel
-    ? normalizeModelStatus('ecg-arrhythmia', ecgModel.latest.prediction_label, ecgModel.status)
+    ? normalizeModelStatus('ecg-arrhythmia', ecgModel.latest.prediction_label, ecgModel.status, ecgModel.latest.confidence)
     : undefined;
   const hasEcgInput = Boolean(ecgModel && ecgModel.sample_count > 0 && ecgStatus !== 'unknown');
   const hasImportantAlert = status === 'danger' || status === 'warning';
@@ -354,7 +663,7 @@ function AiSummaryPanel({ summary, loading, error }: { summary?: AiSummary; load
               </div>
               <div className="mt-2 flex items-end gap-2">
                 <span className={`text-lg font-bold ${modelStyles.text}`}>
-                  {getReadableAiLabel('vitals-risk', vitalsModel.latest.prediction_label)}
+                  {getReadableAiLabel(vitalsModel.latest.model_name, vitalsModel.latest.prediction_label)}
                 </span>
                 <span className="text-xs text-slate-500 mb-0.5">
                   xác suất {formatAiConfidence(vitalsModel.latest.confidence)}
@@ -378,7 +687,7 @@ function AiSummaryPanel({ summary, loading, error }: { summary?: AiSummary; load
                 </div>
                 <div className="mt-2 flex items-end gap-2">
                   <span className={`text-lg font-bold ${modelStyles.text}`}>
-                    {getReadableAiLabel('ecg-arrhythmia', ecgModel.latest.prediction_label)}
+                    {getReadableAiLabelWithConfidence('ecg-arrhythmia', ecgModel.latest.prediction_label, ecgModel.latest.confidence)}
                   </span>
                   <span className="text-xs text-slate-500 mb-1">
                     xác suất {formatAiConfidence(ecgModel.latest.confidence)}
@@ -449,6 +758,8 @@ export default function DashboardPage() {
   const [deviceStatusMap, setDeviceStatusMap] = useState<Record<string, 'online' | 'offline'>>({});
   const [liveByDevice, setLiveByDevice] = useState<Record<string, RealtimeVitalsPayload>>({});
   const [realtimeRecordsByDevice, setRealtimeRecordsByDevice] = useState<Record<string, HealthRecord[]>>({});
+  const liveBufferRef = useRef<Record<string, RealtimeVitalsPayload>>({});
+  const recordBufferRef = useRef<Record<string, HealthRecord[]>>({});
 
   // Stable key so the socket only reconnects when the device list changes
   const deviceIdKey = useMemo(
@@ -470,16 +781,38 @@ export default function DashboardPage() {
 
       sock.on(`realtime-${devId}`, (payload: RealtimeVitalsPayload) => {
         const incomingId = payload?.device_id || devId;
-        setLiveByDevice((prev) => ({ ...prev, [incomingId]: payload }));
         const realtimeRecord = toRealtimeHealthRecord(payload, incomingId);
-        setRealtimeRecordsByDevice((prev) => {
-          const current = prev[incomingId] || [];
-          const next = [...current, realtimeRecord].slice(-180);
-          return { ...prev, [incomingId]: next };
-        });
+        liveBufferRef.current[incomingId] = payload;
+        recordBufferRef.current[incomingId] = [
+          ...(recordBufferRef.current[incomingId] || []),
+          realtimeRecord,
+        ].slice(-120);
       });
     }
-    return () => { sock.disconnect(); };
+    const flushTimer = window.setInterval(() => {
+      const liveEntries = Object.entries(liveBufferRef.current);
+      const recordEntries = Object.entries(recordBufferRef.current);
+      if (!liveEntries.length && !recordEntries.length) return;
+
+      if (liveEntries.length) {
+        setLiveByDevice((prev) => ({ ...prev, ...liveBufferRef.current }));
+        liveBufferRef.current = {};
+      }
+      if (recordEntries.length) {
+        setRealtimeRecordsByDevice((prev) => {
+          const next = { ...prev };
+          for (const [incomingId, buffered] of recordEntries) {
+            next[incomingId] = [...(next[incomingId] || []), ...buffered].slice(-240);
+          }
+          return next;
+        });
+        recordBufferRef.current = {};
+      }
+    }, 150);
+    return () => {
+      window.clearInterval(flushTimer);
+      sock.disconnect();
+    };
   }, [deviceIdKey]);
 
   const {
@@ -536,6 +869,7 @@ export default function DashboardPage() {
 
   const latestRecord = records.at(-1) ?? null;
   const latestLive = selectedDeviceId ? liveByDevice[selectedDeviceId] : null;
+  const realtimeEcgRecords = selectedDeviceId ? (realtimeRecordsByDevice[selectedDeviceId] || []) : [];
   const latest = {
     heart_rate: latestLive?.hr ?? latestRecord?.heart_rate ?? null,
     spo2: latestLive?.spo2 ?? latestRecord?.spo2 ?? null,
@@ -723,7 +1057,7 @@ export default function DashboardPage() {
 
       {/* ── ECG ── */}
       <div className="grid grid-cols-1">
-        <EcgCard data={records} />
+        <EcgCard data={realtimeEcgRecords} />
       </div>
 
       {/* ── Table ── */}

@@ -14,6 +14,12 @@ router.post(
     aiController.predictLatest
 );
 
+router.post(
+    '/manual-blood-pressure/:deviceId',
+    consentMiddleware.requireConsentSessionForDoctorByDeviceParam('deviceId'),
+    aiController.recordManualBloodPressure
+);
+
 router.get(
     '/summary/:deviceId',
     consentMiddleware.requireConsentSessionForDoctorByDeviceParam('deviceId'),
