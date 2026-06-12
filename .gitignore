@@ -30,6 +30,29 @@ mosquitto/log/
 # Upload/runtime files
 backend/uploads/
 
+# AI training datasets and generated artifacts
+mit-bih-arrhythmia-database-1.0.0/
+mit-bih-arrhythmia-database-1.0.0.zip
+backend/scripts/mitbih_*.jsonl
+backend/scripts/*_eval.jsonl
+backend/scripts/*.out.txt
+backend/scripts/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+datasets/
+training_data/
+train_data/
+data_train/
+ai_training_data/
+runs/
+wandb/
+checkpoints/
+*.ckpt
+*.h5
+*.keras
+
 # TypeScript cache
 *.tsbuildinfo
 
