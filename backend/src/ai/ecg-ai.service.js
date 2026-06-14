@@ -282,13 +282,17 @@ const predict = async ({ healthRecord } = {}) => {
     }
 
     const input = tf.tensor3d([ecgWindow.window], [1, scaler.windowSize, 1]);
-    const output = model.predict(input);
-    const outputTensor = Array.isArray(output) ? output[0] : output;
-    const values = Array.from(await outputTensor.data());
-
-    input.dispose();
-    if (Array.isArray(output)) output.forEach((tensor) => tensor.dispose?.());
-    else output.dispose?.();
+    let output;
+    let values;
+    try {
+        output = model.predict(input);
+        const outputTensor = Array.isArray(output) ? output[0] : output;
+        values = Array.from(await outputTensor.data());
+    } finally {
+        input.dispose();
+        if (Array.isArray(output)) output.forEach((tensor) => tensor.dispose?.());
+        else output?.dispose?.();
+    }
 
     const probabilities = normalizeProbabilities(values);
     const classification = classifyOutput({
@@ -331,4 +335,5 @@ const predict = async ({ healthRecord } = {}) => {
 module.exports = {
     predict,
     getStatus,
+    loadModel,
 };

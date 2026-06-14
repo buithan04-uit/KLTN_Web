@@ -8,6 +8,7 @@ const initMQTT = require('./src/services/mqtt.service');
 const ConsentModel = require('./src/models/consent.model');
 const db = require('./src/config/db');
 const { setIO } = require('./src/config/io');
+const aiService = require('./src/ai/ai.service');
 
 const server = http.createServer(app);
 
@@ -78,6 +79,13 @@ io.on('connection', (socket) => {
 
 // Khởi động dịch vụ lắng nghe MQTT
 initMQTT(io);
+
+// Nạp trước các model AI (vitals risk + ECG arrhythmia) ngay khi khởi động,
+// tránh việc lần dự đoán đầu tiên (khi có dữ liệu MQTT đầu tiên) bị chặn bởi
+// thời gian load model từ disk.
+aiService.warmup()
+    .then(() => console.log('🤖 AI models warmed up'))
+    .catch((err) => console.warn('⚠️ AI model warmup failed:', err.message));
 
 // Watchdog: đánh dấu thiết bị offline sau khi không nhận dữ liệu
 const OFFLINE_THRESHOLD_S = parseInt(process.env.DEVICE_OFFLINE_THRESHOLD_S || '60', 10);

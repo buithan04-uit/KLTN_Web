@@ -29,10 +29,21 @@ const getStatus = () => ({
     disclaimer: AI_DISCLAIMER,
 });
 
+// Load both TF models into memory once at startup so the first real-time
+// prediction after a server (re)start doesn't pay the disk-load latency
+// inline with the MQTT ingest path.
+const warmup = async () => {
+    await Promise.all([
+        vitalsAiService.loadModel().catch(() => null),
+        ecgAiService.loadModel().catch(() => null),
+    ]);
+};
+
 module.exports = {
     AI_DISCLAIMER,
     predictFromHealthRecord,
     getStatus,
+    warmup,
     vitalsAiService,
     ecgAiService,
 };

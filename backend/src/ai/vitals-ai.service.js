@@ -291,13 +291,17 @@ const runModel = async ({ featureVector, raw }) => {
     }
 
     const input = tf.tensor2d([scaled], [1, scaled.length]);
-    const output = model.predict(input);
-    const outputTensor = Array.isArray(output) ? output[0] : output;
-    const values = Array.from(await outputTensor.data());
-
-    input.dispose();
-    if (Array.isArray(output)) output.forEach((tensor) => tensor.dispose?.());
-    else output.dispose?.();
+    let output;
+    let values;
+    try {
+        output = model.predict(input);
+        const outputTensor = Array.isArray(output) ? output[0] : output;
+        values = Array.from(await outputTensor.data());
+    } finally {
+        input.dispose();
+        if (Array.isArray(output)) output.forEach((tensor) => tensor.dispose?.());
+        else output?.dispose?.();
+    }
 
     const classes = encoderCache?.classes || ['High Risk', 'Low Risk'];
     const sigmoidProbability = values.length === 1 ? values[0] : null;
@@ -365,6 +369,7 @@ const predict = async ({ healthRecord, patientProfile } = {}) => {
 module.exports = {
     predict,
     getStatus,
+    loadModel,
     buildFeatureVector,
     assessRuleBasedRisk,
 };
