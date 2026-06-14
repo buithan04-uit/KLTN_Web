@@ -211,19 +211,9 @@ const runAiForInsertedRecord = async ({ io, inserted, device }) => {
         aiRuntime.lastRunAtByDevice.set(deviceId, Date.now());
 
         const patientProfile = await UserModel.getProfile(device.owner_id);
-        let healthRecordForAi = inserted;
-        if (!healthRecordForAi.ecg_ai_window && (!Array.isArray(inserted.ecg_points) || inserted.ecg_points.length < 100)) {
-            const ecgPoints = await HealthModel.getRecentEcgPoints(inserted.device_id, 8);
-            if (ecgPoints.length >= 100) {
-                healthRecordForAi = {
-                    ...inserted,
-                    ecg_points: ecgPoints.slice(-256),
-                };
-            }
-        }
 
         const predictions = await aiService.predictFromHealthRecord({
-            healthRecord: healthRecordForAi,
+            healthRecord: inserted,
             patientProfile,
         });
 

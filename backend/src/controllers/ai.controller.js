@@ -217,23 +217,12 @@ const predictLatest = async (req, res) => {
             return res.status(404).json({ error: 'Chưa có dữ liệu sức khỏe cho thiết bị này' });
         }
 
-        let healthRecordForAi = latest;
-        if (!Array.isArray(latest.ecg_points) || latest.ecg_points.length < 100) {
-            const ecgPoints = await HealthModel.getRecentEcgPoints(deviceId, 8);
-            if (ecgPoints.length >= 100) {
-                healthRecordForAi = {
-                    ...latest,
-                    ecg_points: ecgPoints.slice(-256),
-                };
-            }
-        }
-
         const patientProfile = access.device.owner_id
             ? await UserModel.getProfile(access.device.owner_id)
             : null;
 
         const predictions = await aiService.predictFromHealthRecord({
-            healthRecord: healthRecordForAi,
+            healthRecord: latest,
             patientProfile,
         });
 

@@ -90,25 +90,6 @@ const HealthModel = {
         return result.rows;
     },
 
-    getRecentEcgPoints: async (device_id, limit = 8) => {
-        const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(Number(limit), 20)) : 8;
-        const result = await db.query(
-            `SELECT time, ecg_points
-             FROM health_data
-             WHERE device_id = $1
-               AND ecg_points IS NOT NULL
-             ORDER BY time DESC
-             LIMIT $2`,
-            [device_id, safeLimit]
-        );
-
-        return result.rows
-            .reverse()
-            .flatMap((row) => Array.isArray(row.ecg_points) ? row.ecg_points : [])
-            .filter((value) => Number.isFinite(Number(value)))
-            .map((value) => Number(value));
-    },
-
     getAbnormal: async (device_id, since = null) => {
         const sinceDate = since ? new Date(since) : null;
         const result = sinceDate && !Number.isNaN(sinceDate.getTime())

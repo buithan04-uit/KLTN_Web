@@ -3,7 +3,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { loadTensorflow } = require('./tensorflow');
 const { graphModelFileHandler } = require('./filesystem-io');
-const { buildEcgWindow, toFiniteNumber } = require('./preprocessing');
+const { toFiniteNumber } = require('./preprocessing');
 
 const MODEL_DIR = path.join(__dirname, 'models', 'ecg-arrhythmia');
 const MODEL_JSON = path.join(MODEL_DIR, 'model.json');
@@ -250,20 +250,13 @@ const predict = async ({ healthRecord } = {}) => {
         return { skipped: true, reason: 'model_unavailable', status };
     }
 
-    const ecgPoints = toNumericArray(
-        Array.isArray(healthRecord?.ecg_points)
-            ? healthRecord.ecg_points
-            : healthRecord?.ecg_ai_window?.points,
-    );
-    if (!ecgPoints.length) {
-        return { skipped: true, reason: 'missing_ecg_points' };
-    }
-
+    // Only trust windows the firmware itself extracted and normalized
+    // (ecg_ai_window). Raw ecg_points from ecg_frame are display-scale
+    // samples from a different filter chain with an unknown gain relative
+    // to MIT-BIH — feeding them through buildEcgWindow produced inputs far
+    // outside the model's training distribution, so that fallback has been
+    // removed.
     const scaler = getScaler();
-    const samplingRate = pickNumber(
-        healthRecord?.sampling_rate,
-        healthRecord?.ecg_sampling_rate,
-    );
     const preprocessedWindow = buildPreprocessedEcgWindow(healthRecord, scaler);
     if (preprocessedWindow?.error) {
         return {
@@ -274,22 +267,13 @@ const predict = async ({ healthRecord } = {}) => {
         };
     }
 
-    const ecgWindow = preprocessedWindow || buildEcgWindow(ecgPoints, {
-        windowSize: scaler.windowSize,
-        mean: scaler.mean,
-        std: scaler.std,
-        samplingRate,
-        expectedSamplingRate: scaler.expectedSamplingRate,
-    });
-
-    if (!ecgWindow?.window) {
-        return {
-            skipped: true,
-            reason: 'ecg_window_unavailable',
-            required_points: scaler.windowSize,
-            received_points: ecgPoints.length,
-        };
+    if (!preprocessedWindow?.window) {
+        return { skipped: true, reason: 'ecg_ai_window_required' };
     }
+
+    const ecgWindow = preprocessedWindow;
+    const ecgPoints = ecgWindow.raw_window;
+    const samplingRate = ecgWindow.quality?.sampling_rate ?? null;
 
     const { tf } = loadTensorflow();
     const model = await loadModel();
