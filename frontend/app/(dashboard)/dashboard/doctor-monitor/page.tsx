@@ -532,8 +532,10 @@ export default function DoctorMonitorPage() {
   const [connected, setConnected] = useState(false);
   const [live, setLive] = useState<RealtimePayload | null>(null);
   const [events, setEvents] = useState<RealtimePayload[]>([]);
+  const [ecgEvents, setEcgEvents] = useState<RealtimePayload[]>([]);
   const liveBufferRef = useRef<RealtimePayload | null>(null);
   const eventsBufferRef = useRef<RealtimePayload[]>([]);
+  const ecgEventsBufferRef = useRef<RealtimePayload[]>([]);
   const [error, setError] = useState('');
   // Read sessions from localStorage via lazy init (same typeof window pattern used in codebase)
   const [sessionsMap, setSessionsMap] = useState<Record<string, SessionEntry>>(() => {
@@ -622,6 +624,7 @@ export default function DoctorMonitorPage() {
       setShowAddForm(false);
       setLive(null);
       setEvents([]);
+      setEcgEvents([]);
       setConnected(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Xác thực mã thất bại');
@@ -653,6 +656,7 @@ export default function DoctorMonitorPage() {
       setActiveDeviceId('');
       setLive(null);
       setEvents([]);
+      setEcgEvents([]);
       setConnected(false);
       setDeviceOnline(null);
       setError('');
@@ -812,6 +816,13 @@ export default function DoctorMonitorPage() {
     [events, deviceId]
   );
 
+  const realtimeEcgRows = useMemo<DoctorHistoryRow[]>(
+    () => ecgEvents
+      .filter((e) => e.device_id === deviceId)
+      .map((e) => toDoctorHistoryRowFromRealtime(e)),
+    [ecgEvents, deviceId]
+  );
+
   const historyWithRealtime = useMemo<DoctorHistoryRow[]>(() => {
     const realtimeRows = realtimeHistoryRows;
     const merged = [...realtimeRows, ...history];
@@ -877,7 +888,7 @@ export default function DoctorMonitorPage() {
   );
 
   const doctorEcgData = useMemo(() => {
-    const frameRecords = realtimeHistoryRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points));
+    const frameRecords = realtimeEcgRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points));
     const displayFrameRecords = frameRecords;
     const sweepSlots = new Map<number, { i: number; value: number | null; raw: number | null; order: number }>();
     let latestCursor = 0;
@@ -896,15 +907,15 @@ export default function DoctorMonitorPage() {
       sweepSlots.set(i, { i, value: null, raw: null, order: Number.MAX_SAFE_INTEGER });
     }
     return Array.from(sweepSlots.values()).sort((a, b) => a.i - b.i);
-  }, [realtimeHistoryRows]);
+  }, [realtimeEcgRows]);
 
   const doctorEcgFrames = useMemo(() => {
-    const frameRecords = realtimeHistoryRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points));
+    const frameRecords = realtimeEcgRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points));
     const latestMode = frameRecords[0]?.mode ?? null;
     // Chỉ giữ các frame cùng mode với frame mới nhất (tránh trộn ecg/measure_all
     // khi chuyển mode, gây giật/lag cho đến khi reload trang).
     return frameRecords.filter((r) => (r.mode ?? null) === latestMode);
-  }, [realtimeHistoryRows]);
+  }, [realtimeEcgRows]);
 
   const doctorEcgMeta = useMemo(() => {
     const frameRecords = doctorEcgFrames;
@@ -1007,8 +1018,13 @@ export default function DoctorMonitorPage() {
       const parsedTs = payload.ts ? new Date(payload.ts).getTime() : NaN;
       const next = { ...payload, received_at: Number.isFinite(parsedTs) ? parsedTs : Date.now() };
       const isAiWindow = payload.type === 'ecg_ai_window' || payload.mode === 'ecg_ai';
-      if (!isAiWindow) {
-        liveBufferRef.current = next;
+      if (isAiWindow) return;
+      liveBufferRef.current = next;
+      if (payload.type === 'ecg_frame') {
+        // Tách riêng ecg_frame để không làm "events" (biểu đồ nhịp tim/SpO2/nhiệt độ)
+        // đổi reference liên tục khi ở MeasureAll, tránh re-render chen vào gây giật sóng ECG.
+        ecgEventsBufferRef.current = [next, ...ecgEventsBufferRef.current].slice(0, 80);
+      } else {
         eventsBufferRef.current = [next, ...eventsBufferRef.current].slice(0, 80);
       }
     });
@@ -1028,6 +1044,7 @@ export default function DoctorMonitorPage() {
     const flushTimer = window.setInterval(() => {
       const nextLive = liveBufferRef.current;
       const nextEvents = eventsBufferRef.current;
+      const nextEcgEvents = ecgEventsBufferRef.current;
       if (nextLive) {
         setLive(nextLive);
         liveBufferRef.current = null;
@@ -1035,6 +1052,10 @@ export default function DoctorMonitorPage() {
       if (nextEvents.length) {
         setEvents((prev) => [...nextEvents, ...prev].slice(0, 160));
         eventsBufferRef.current = [];
+      }
+      if (nextEcgEvents.length) {
+        setEcgEvents((prev) => [...nextEcgEvents, ...prev].slice(0, 240));
+        ecgEventsBufferRef.current = [];
       }
     }, 150);
 
@@ -1196,6 +1217,7 @@ export default function DoctorMonitorPage() {
                         setActiveDeviceId(devId);
                         setLive(null);
                         setEvents([]);
+                        setEcgEvents([]);
                         setError('');
                         setConnected(false);
                         setDeviceOnline(null);
@@ -1240,6 +1262,7 @@ export default function DoctorMonitorPage() {
                 setViewMode('focus');
                 setLive(null);
                 setEvents([]);
+                setEcgEvents([]);
                 setError('');
                 setConnected(false);
                 setDeviceOnline(null);

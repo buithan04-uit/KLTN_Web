@@ -803,8 +803,10 @@ export default function DashboardPage() {
   const [deviceStatusMap, setDeviceStatusMap] = useState<Record<string, 'online' | 'offline'>>({});
   const [liveByDevice, setLiveByDevice] = useState<Record<string, RealtimeVitalsPayload>>({});
   const [realtimeRecordsByDevice, setRealtimeRecordsByDevice] = useState<Record<string, HealthRecord[]>>({});
+  const [realtimeEcgFramesByDevice, setRealtimeEcgFramesByDevice] = useState<Record<string, HealthRecord[]>>({});
   const liveBufferRef = useRef<Record<string, RealtimeVitalsPayload>>({});
   const recordBufferRef = useRef<Record<string, HealthRecord[]>>({});
+  const ecgFrameBufferRef = useRef<Record<string, HealthRecord[]>>({});
 
   // Stable key so the socket only reconnects when the device list changes
   const deviceIdKey = useMemo(
@@ -828,8 +830,17 @@ export default function DashboardPage() {
         const incomingId = payload?.device_id || devId;
         const realtimeRecord = toRealtimeHealthRecord(payload, incomingId);
         const isAiWindow = isEcgAiWindowPayload(payload);
-        if (!isAiWindow && shouldBufferRealtimeRecord(payload)) {
-          liveBufferRef.current[incomingId] = mergeRealtimePayload(liveBufferRef.current[incomingId], payload);
+        if (isAiWindow || !shouldBufferRealtimeRecord(payload)) return;
+        liveBufferRef.current[incomingId] = mergeRealtimePayload(liveBufferRef.current[incomingId], payload);
+        if (isEcgFramePayload(payload)) {
+          // ecg_frame được tách riêng để không làm "records" (biểu đồ
+          // nhiệt độ/nhịp tim) đổi reference liên tục khi ở MeasureAll,
+          // tránh Recharts re-render chen vào gây giật sóng ECG.
+          ecgFrameBufferRef.current[incomingId] = [
+            ...(ecgFrameBufferRef.current[incomingId] || []),
+            realtimeRecord,
+          ].slice(-80);
+        } else {
           recordBufferRef.current[incomingId] = [
             ...(recordBufferRef.current[incomingId] || []),
             realtimeRecord,
@@ -840,7 +851,8 @@ export default function DashboardPage() {
     const flushTimer = window.setInterval(() => {
       const liveEntries = Object.entries(liveBufferRef.current);
       const recordEntries = Object.entries(recordBufferRef.current);
-      if (!liveEntries.length && !recordEntries.length) return;
+      const ecgFrameEntries = Object.entries(ecgFrameBufferRef.current);
+      if (!liveEntries.length && !recordEntries.length && !ecgFrameEntries.length) return;
 
       if (liveEntries.length) {
         setLiveByDevice((prev) => {
@@ -861,6 +873,16 @@ export default function DashboardPage() {
           return next;
         });
         recordBufferRef.current = {};
+      }
+      if (ecgFrameEntries.length) {
+        setRealtimeEcgFramesByDevice((prev) => {
+          const next = { ...prev };
+          for (const [incomingId, buffered] of ecgFrameEntries) {
+            next[incomingId] = [...(next[incomingId] || []), ...buffered].slice(-240);
+          }
+          return next;
+        });
+        ecgFrameBufferRef.current = {};
       }
     }, 150);
     return () => {
@@ -924,7 +946,7 @@ export default function DashboardPage() {
   const vitalsRecords = records.filter(hasVitalsSummary);
   const latestRecord = vitalsRecords.at(-1) ?? null;
   const latestLive = selectedDeviceId ? liveByDevice[selectedDeviceId] : null;
-  const realtimeEcgRecords = selectedDeviceId ? (realtimeRecordsByDevice[selectedDeviceId] || []) : [];
+  const realtimeEcgRecords = selectedDeviceId ? (realtimeEcgFramesByDevice[selectedDeviceId] || []) : [];
   const latest = {
     heart_rate: latestLive?.hr ?? latestRecord?.heart_rate ?? null,
     spo2: latestLive?.spo2 ?? latestRecord?.spo2 ?? null,
