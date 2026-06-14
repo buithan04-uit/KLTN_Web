@@ -491,18 +491,7 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
             : 'Dang cho ECG frame realtime'}
         </span>
       </div>
-      {isMeasureAllFrame ? (
-        <div className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600 md:grid-cols-4">
-          <span>MQTT: <b className="text-slate-800">receiving</b></span>
-          <span>Frame: <b className="text-slate-800">{latestWaveRecord?.ecg_seq ?? '-'}</b></span>
-          <span>Samples: <b className="text-slate-800">{latestWaveRecord?.ecg_points?.length ?? latestWaveRecord?.ecg_lcd_points?.length ?? '-'}</b></span>
-          <span>HR ECG: <b className="text-slate-800">{latestWaveRecord?.heart_rate ?? '-'}</b></span>
-          <span>P2P: <b className="text-slate-800">{latestWaveRecord?.p2p_mv?.toFixed?.(0) ?? '-'} mV</b></span>
-          <span>Clip: <b className="text-slate-800">{latestWaveRecord?.clip_pct?.toFixed?.(0) ?? '-'}%</b></span>
-          <span>Fs: <b className="text-slate-800">{latestWaveRecord?.ecg_sampling_rate ?? '-'}Hz</b></span>
-          <span>{quality.hint}</span>
-        </div>
-      ) : !numericPoints.length ? (
+      {!numericPoints.length ? (
         <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
           Chưa có ecg_frame realtime để vẽ sóng ECG.
         </div>
@@ -517,7 +506,7 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
         />
       </div>
       )}
-      {isFrame && !isMeasureAllFrame && (
+      {isFrame && (
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 md:grid-cols-4">
           <span>Biên độ đỉnh-đỉnh: <b>{latestWaveRecord?.p2p_mv?.toFixed?.(0) ?? '-'} mV</b></span>
           <span>Cắt biên: <b>{latestWaveRecord?.clip_pct?.toFixed?.(0) ?? '-'}%</b></span>
