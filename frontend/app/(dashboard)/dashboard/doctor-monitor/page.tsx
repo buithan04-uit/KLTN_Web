@@ -7,7 +7,7 @@ import { useGetApiHealthClinicalSummaryDeviceId, useGetApiHealthTrendsDeviceId, 
 import { useAuth } from '@/context/AuthContext';
 import { consentApi } from '@/lib/api/consent';
 import { aiApi, type AiStatus } from '@/lib/api/ai';
-import { Activity, AlertTriangle, BrainCircuit, HeartPulse, KeyRound, LayoutGrid, Maximize2, Plus, PlugZap, X } from 'lucide-react';
+import { Activity, AlertTriangle, BrainCircuit, HeartPulse, KeyRound, LayoutGrid, Maximize2, Plus, PlugZap, RefreshCw, X } from 'lucide-react';
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 type RealtimePayload = {
@@ -160,14 +160,20 @@ const ECG_TARGET_DELAY_SECONDS = 0.45;
 const ECG_MAX_DELAY_SECONDS = 0.9;
 const ECG_LCD_INVERT = true;
 
+// Nếu không nhận sample mới quá lâu (luồng dừng) rồi có dữ liệu trở lại,
+// vẽ lại từ đầu thay vì tiếp tục từ vị trí cũ.
+const ECG_STALL_RESET_MS = 2000;
+
 function EcgSweepCanvas({
   frames,
   isLcdDisplay,
   samplingRate,
+  resetSignal,
 }: {
   frames: DoctorHistoryRow[];
   isLcdDisplay: boolean;
   samplingRate: number;
+  resetSignal?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const queueRef = useRef<number[]>([]);
@@ -176,17 +182,23 @@ function EcgSweepCanvas({
   const cursorRef = useRef(0);
   const lastFrameTimeRef = useRef<number | null>(null);
   const sampleCarryRef = useRef(0);
+  const lastIngestAtRef = useRef<number | null>(null);
   const valueRangeRef = useRef({ min: 0, max: 240 });
   const streamKey = `${frames.at(-1)?.device_id || frames[0]?.device_id || ''}|${frames.at(-1)?.mode || frames[0]?.mode || ''}`;
 
-  useEffect(() => {
+  const resetSweep = () => {
     queueRef.current = [];
     seenRef.current = new Set();
     bufferRef.current = Array.from({ length: ECG_SWEEP_CAPACITY }, () => NaN);
     cursorRef.current = 0;
     lastFrameTimeRef.current = null;
     sampleCarryRef.current = 0;
-  }, [streamKey]);
+    lastIngestAtRef.current = null;
+  };
+
+  useEffect(() => {
+    resetSweep();
+  }, [streamKey, resetSignal]);
 
   useEffect(() => {
     const maxQueuedSamples = Math.max(64, Math.round((samplingRate || 250) * ECG_MAX_DELAY_SECONDS));
@@ -195,7 +207,14 @@ function EcgSweepCanvas({
       if (seenRef.current.has(key)) continue;
       seenRef.current.add(key);
       const points = getEcgDisplayPoints(frame)?.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) || [];
-      if (points.length) queueRef.current.push(...points);
+      if (!points.length) continue;
+      const now = Date.now();
+      if (lastIngestAtRef.current !== null && now - lastIngestAtRef.current > ECG_STALL_RESET_MS) {
+        // Dữ liệu vừa dừng một lúc rồi gửi lại: bắt đầu vẽ lại từ đầu.
+        resetSweep();
+      }
+      lastIngestAtRef.current = now;
+      queueRef.current.push(...points);
     }
     if (queueRef.current.length > maxQueuedSamples) {
       queueRef.current = queueRef.current.slice(-maxQueuedSamples);
@@ -533,6 +552,7 @@ export default function DoctorMonitorPage() {
   const [live, setLive] = useState<RealtimePayload | null>(null);
   const [events, setEvents] = useState<RealtimePayload[]>([]);
   const [ecgEvents, setEcgEvents] = useState<RealtimePayload[]>([]);
+  const [ecgResetSignal, setEcgResetSignal] = useState(0);
   const liveBufferRef = useRef<RealtimePayload | null>(null);
   const eventsBufferRef = useRef<RealtimePayload[]>([]);
   const ecgEventsBufferRef = useRef<RealtimePayload[]>([]);
@@ -1347,6 +1367,15 @@ export default function DoctorMonitorPage() {
               ? `${doctorEcgMeta.sampleCount} mau ECG | ${doctorEcgMeta.isLcdDisplay ? 'LCD' : 'mV'} | ${doctorEcgMeta.mode ?? 'ecg'} | ${doctorEcgMeta.samplingRate}Hz | HR ${doctorEcgMeta.heartRate ?? '-'}`
               : 'Dang cho ECG frame realtime'}
           </span>
+          <button
+            type="button"
+            onClick={() => setEcgResetSignal((n) => n + 1)}
+            title="Vẽ lại sóng ECG từ đầu (nếu bị giật/lag)"
+            className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Làm mới
+          </button>
         </div>
         {!doctorEcgFrames.length ? (
           <p className="text-sm text-slate-500">Chưa có ecg_frame realtime để vẽ sóng ECG.</p>
@@ -1358,6 +1387,7 @@ export default function DoctorMonitorPage() {
               frames={doctorEcgFrames.slice(0, 80).reverse()}
               isLcdDisplay={doctorEcgMeta.isLcdDisplay}
               samplingRate={doctorEcgMeta.samplingRate}
+              resetSignal={ecgResetSignal}
             />
           </div>
         )}

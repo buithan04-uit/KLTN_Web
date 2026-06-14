@@ -141,14 +141,20 @@ const ECG_TARGET_DELAY_SECONDS = 0.45;
 const ECG_MAX_DELAY_SECONDS = 0.9;
 const ECG_LCD_INVERT = true;
 
+// Nếu không nhận sample mới quá lâu (luồng dừng) rồi có dữ liệu trở lại,
+// vẽ lại từ đầu thay vì tiếp tục từ vị trí cũ.
+const ECG_STALL_RESET_MS = 2000;
+
 function EcgSweepCanvas({
   frames,
   isLcdDisplay,
   samplingRate,
+  resetSignal,
 }: {
   frames: HealthRecord[];
   isLcdDisplay: boolean;
   samplingRate: number;
+  resetSignal?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const queueRef = useRef<number[]>([]);
@@ -157,17 +163,23 @@ function EcgSweepCanvas({
   const cursorRef = useRef(0);
   const lastFrameTimeRef = useRef<number | null>(null);
   const sampleCarryRef = useRef(0);
+  const lastIngestAtRef = useRef<number | null>(null);
   const valueRangeRef = useRef({ min: 0, max: 240 });
   const streamKey = `${frames.at(-1)?.device_id || frames[0]?.device_id || ''}|${frames.at(-1)?.mode || frames[0]?.mode || ''}`;
 
-  useEffect(() => {
+  const resetSweep = () => {
     queueRef.current = [];
     seenRef.current = new Set();
     bufferRef.current = Array.from({ length: ECG_SWEEP_CAPACITY }, () => NaN);
     cursorRef.current = 0;
     lastFrameTimeRef.current = null;
     sampleCarryRef.current = 0;
-  }, [streamKey]);
+    lastIngestAtRef.current = null;
+  };
+
+  useEffect(() => {
+    resetSweep();
+  }, [streamKey, resetSignal]);
 
   useEffect(() => {
     const maxQueuedSamples = Math.max(64, Math.round((samplingRate || 250) * ECG_MAX_DELAY_SECONDS));
@@ -176,7 +188,14 @@ function EcgSweepCanvas({
       if (seenRef.current.has(key)) continue;
       seenRef.current.add(key);
       const points = getEcgDisplayPoints(frame)?.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) || [];
-      if (points.length) queueRef.current.push(...points);
+      if (!points.length) continue;
+      const now = Date.now();
+      if (lastIngestAtRef.current !== null && now - lastIngestAtRef.current > ECG_STALL_RESET_MS) {
+        // Dữ liệu vừa dừng một lúc rồi gửi lại: bắt đầu vẽ lại từ đầu.
+        resetSweep();
+      }
+      lastIngestAtRef.current = now;
+      queueRef.current.push(...points);
     }
     if (queueRef.current.length > maxQueuedSamples) {
       queueRef.current = queueRef.current.slice(-maxQueuedSamples);
@@ -466,6 +485,7 @@ function VitalCard({ label, value, field, icon, data, dataKey }: VitalCardProps)
 
 // ─── ECG mini chart ────────────────────────────────────────────────────────────
 function EcgCard({ data }: { data: HealthRecord[] }) {
+  const [resetSignal, setResetSignal] = useState(0);
   const frameRecords = data.filter((r) => (r.type === 'ecg_frame' || r.note === 'ecg_frame') && Array.isArray(r.ecg_points));
   const latestFrameRecord = frameRecords.at(-1);
   const latestMode = latestFrameRecord?.mode ?? null;
@@ -493,6 +513,15 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
             ? `${visibleSampleCount} mau ECG | ${isLcdDisplay ? 'LCD' : 'mV'} | ${latestWaveRecord?.mode ?? 'ecg'} | ${latestWaveRecord?.ecg_sampling_rate ?? 250}Hz | HR ${latestWaveRecord?.heart_rate ?? '-'}`
             : 'Dang cho ECG frame realtime'}
         </span>
+        <button
+          type="button"
+          onClick={() => setResetSignal((n) => n + 1)}
+          title="Vẽ lại sóng ECG từ đầu (nếu bị giật/lag)"
+          className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Làm mới
+        </button>
       </div>
       {!numericPoints.length ? (
         <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
@@ -506,6 +535,7 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
           frames={displayFrameRecords.slice(-80)}
           isLcdDisplay={isLcdDisplay}
           samplingRate={latestWaveRecord?.ecg_sampling_rate ?? 250}
+          resetSignal={resetSignal}
         />
       </div>
       )}
