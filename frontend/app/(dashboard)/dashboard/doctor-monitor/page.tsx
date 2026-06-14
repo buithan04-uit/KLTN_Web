@@ -1003,8 +1003,11 @@ export default function DoctorMonitorPage() {
     socket.on('vitals', (payload: RealtimePayload) => {
       const parsedTs = payload.ts ? new Date(payload.ts).getTime() : NaN;
       const next = { ...payload, received_at: Number.isFinite(parsedTs) ? parsedTs : Date.now() };
-      liveBufferRef.current = next;
-      eventsBufferRef.current = [next, ...eventsBufferRef.current].slice(0, 80);
+      const isAiWindow = payload.type === 'ecg_ai_window' || payload.mode === 'ecg_ai';
+      if (!isAiWindow) {
+        liveBufferRef.current = next;
+        eventsBufferRef.current = [next, ...eventsBufferRef.current].slice(0, 80);
+      }
     });
 
     socket.on('device-status', (payload: { device_id: string; status: string }) => {

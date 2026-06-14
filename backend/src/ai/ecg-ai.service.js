@@ -10,7 +10,7 @@ const MODEL_JSON = path.join(MODEL_DIR, 'model.json');
 const SCALER_JSON = path.join(MODEL_DIR, 'scaler_ecg.json');
 const METADATA_JSON = path.join(MODEL_DIR, 'metadata.json');
 
-const DEFAULT_CLASSES = ['N', 'S', 'V', 'F', 'Q'];
+const DEFAULT_CLASSES = ['N', 'S', 'V', 'F'];
 const DEFAULT_WINDOW_SIZE = 100;
 const DEFAULT_ECG_MEAN = -0.28766632142632625;
 const DEFAULT_ECG_STD = 0.5241760803999351;
