@@ -96,6 +96,46 @@ function getRecordEcgSummary(record: HealthRecord) {
   };
 }
 
+function isEcgAiWindowPayload(payload: RealtimeVitalsPayload) {
+  return payload.type === 'ecg_ai_window' || payload.mode === 'ecg_ai';
+}
+
+function hasVitalScalarPayload(payload: RealtimeVitalsPayload) {
+  return typeof payload.hr === 'number'
+    || typeof payload.spo2 === 'number'
+    || typeof payload.temp === 'number';
+}
+
+function isEcgFramePayload(payload: RealtimeVitalsPayload) {
+  return payload.type === 'ecg_frame';
+}
+
+function shouldBufferRealtimeRecord(payload: RealtimeVitalsPayload) {
+  return isEcgFramePayload(payload) || hasVitalScalarPayload(payload);
+}
+
+function mergeRealtimePayload(previous: RealtimeVitalsPayload | undefined, incoming: RealtimeVitalsPayload): RealtimeVitalsPayload {
+  if (!previous) return incoming;
+  return {
+    ...previous,
+    ...incoming,
+    hr: incoming.hr ?? previous.hr ?? null,
+    spo2: incoming.spo2 ?? previous.spo2 ?? null,
+    temp: incoming.temp ?? previous.temp ?? null,
+    ecg: incoming.ecg ?? previous.ecg ?? null,
+    ts: incoming.ts ?? previous.ts,
+  };
+}
+
+function hasVitalsSummary(record: HealthRecord) {
+  return record.heart_rate !== null
+    || record.spo2 !== null
+    || record.temperature !== null
+    || record.systolic_bp !== null
+    || record.diastolic_bp !== null
+    || record.map !== null;
+}
+
 const ECG_SWEEP_CAPACITY = 1500;
 const ECG_TARGET_DELAY_SECONDS = 0.45;
 const ECG_MAX_DELAY_SECONDS = 0.9;
@@ -431,6 +471,7 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
   const displayFrameRecords = frameRecords;
   const latestWaveRecord = latestFrameRecord;
   const isFrame = latestWaveRecord?.type === 'ecg_frame' || latestWaveRecord?.note === 'ecg_frame';
+  const isMeasureAllFrame = latestWaveRecord?.mode === 'measure_all' || latestWaveRecord?.mode === 'measureall';
   const numericPoints = displayFrameRecords
     .flatMap((record) => getEcgDisplayPoints(record)?.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) || []);
   const visibleSampleCount = Math.min(numericPoints.length, ECG_SWEEP_CAPACITY);
@@ -443,13 +484,25 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
         <Activity className="w-5 h-5 text-sky-500" />
         <span className="text-sm font-semibold text-slate-700">ECG (điện tim)</span>
         {isFrame && <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${quality.className}`}>{quality.label}</span>}
+        {isMeasureAllFrame && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">MeasureAll</span>}
         <span className="ml-auto text-xs text-slate-400">
           {isFrame
             ? `${visibleSampleCount} mau ECG | ${isLcdDisplay ? 'LCD' : 'mV'} | ${latestWaveRecord?.mode ?? 'ecg'} | ${latestWaveRecord?.ecg_sampling_rate ?? 250}Hz | HR ${latestWaveRecord?.heart_rate ?? '-'}`
             : 'Dang cho ECG frame realtime'}
         </span>
       </div>
-      {!numericPoints.length ? (
+      {isMeasureAllFrame ? (
+        <div className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600 md:grid-cols-4">
+          <span>MQTT: <b className="text-slate-800">receiving</b></span>
+          <span>Frame: <b className="text-slate-800">{latestWaveRecord?.ecg_seq ?? '-'}</b></span>
+          <span>Samples: <b className="text-slate-800">{latestWaveRecord?.ecg_points?.length ?? latestWaveRecord?.ecg_lcd_points?.length ?? '-'}</b></span>
+          <span>HR ECG: <b className="text-slate-800">{latestWaveRecord?.heart_rate ?? '-'}</b></span>
+          <span>P2P: <b className="text-slate-800">{latestWaveRecord?.p2p_mv?.toFixed?.(0) ?? '-'} mV</b></span>
+          <span>Clip: <b className="text-slate-800">{latestWaveRecord?.clip_pct?.toFixed?.(0) ?? '-'}%</b></span>
+          <span>Fs: <b className="text-slate-800">{latestWaveRecord?.ecg_sampling_rate ?? '-'}Hz</b></span>
+          <span>{quality.hint}</span>
+        </div>
+      ) : !numericPoints.length ? (
         <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
           Chưa có ecg_frame realtime để vẽ sóng ECG.
         </div>
@@ -464,7 +517,7 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
         />
       </div>
       )}
-      {isFrame && (
+      {isFrame && !isMeasureAllFrame && (
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 md:grid-cols-4">
           <span>Biên độ đỉnh-đỉnh: <b>{latestWaveRecord?.p2p_mv?.toFixed?.(0) ?? '-'} mV</b></span>
           <span>Cắt biên: <b>{latestWaveRecord?.clip_pct?.toFixed?.(0) ?? '-'}%</b></span>
@@ -478,7 +531,7 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
 
 // ─── Recent table ─────────────────────────────────────────────────────────────
 function RecordsTable({ records }: { records: HealthRecord[] }) {
-  const recent = [...records].reverse().slice(0, 10);
+  const recent = [...records].filter(hasVitalsSummary).reverse().slice(0, 10);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
       <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
@@ -782,11 +835,14 @@ export default function DashboardPage() {
       sock.on(`realtime-${devId}`, (payload: RealtimeVitalsPayload) => {
         const incomingId = payload?.device_id || devId;
         const realtimeRecord = toRealtimeHealthRecord(payload, incomingId);
-        liveBufferRef.current[incomingId] = payload;
-        recordBufferRef.current[incomingId] = [
-          ...(recordBufferRef.current[incomingId] || []),
-          realtimeRecord,
-        ].slice(-120);
+        const isAiWindow = isEcgAiWindowPayload(payload);
+        if (!isAiWindow && shouldBufferRealtimeRecord(payload)) {
+          liveBufferRef.current[incomingId] = mergeRealtimePayload(liveBufferRef.current[incomingId], payload);
+          recordBufferRef.current[incomingId] = [
+            ...(recordBufferRef.current[incomingId] || []),
+            realtimeRecord,
+          ].slice(-120);
+        }
       });
     }
     const flushTimer = window.setInterval(() => {
@@ -795,7 +851,13 @@ export default function DashboardPage() {
       if (!liveEntries.length && !recordEntries.length) return;
 
       if (liveEntries.length) {
-        setLiveByDevice((prev) => ({ ...prev, ...liveBufferRef.current }));
+        setLiveByDevice((prev) => {
+          const next = { ...prev };
+          for (const [incomingId, buffered] of liveEntries) {
+            next[incomingId] = mergeRealtimePayload(next[incomingId], buffered);
+          }
+          return next;
+        });
         liveBufferRef.current = {};
       }
       if (recordEntries.length) {
@@ -867,7 +929,8 @@ export default function DashboardPage() {
   const error = isError ? (err instanceof Error ? err.message : 'Không thể tải dữ liệu') : '';
   const lastUpdated = dataUpdatedAt > 0 ? new Date(dataUpdatedAt) : null;
 
-  const latestRecord = records.at(-1) ?? null;
+  const vitalsRecords = records.filter(hasVitalsSummary);
+  const latestRecord = vitalsRecords.at(-1) ?? null;
   const latestLive = selectedDeviceId ? liveByDevice[selectedDeviceId] : null;
   const realtimeEcgRecords = selectedDeviceId ? (realtimeRecordsByDevice[selectedDeviceId] || []) : [];
   const latest = {
@@ -1034,7 +1097,7 @@ export default function DashboardPage() {
           value={latest?.heart_rate ?? null}
           field="heart_rate"
           icon={<Heart className="w-5 h-5" fill="currentColor" />}
-          data={records}
+          data={vitalsRecords}
           dataKey="heart_rate"
         />
         <VitalCard
@@ -1042,7 +1105,7 @@ export default function DashboardPage() {
           value={latest?.spo2 ?? null}
           field="spo2"
           icon={<Droplets className="w-5 h-5" />}
-          data={records}
+          data={vitalsRecords}
           dataKey="spo2"
         />
         <VitalCard
@@ -1050,7 +1113,7 @@ export default function DashboardPage() {
           value={latest?.temperature ?? null}
           field="temperature"
           icon={<Thermometer className="w-5 h-5" />}
-          data={records}
+          data={vitalsRecords}
           dataKey="temperature"
         />
       </div>
