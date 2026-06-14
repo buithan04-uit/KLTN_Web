@@ -158,6 +158,7 @@ function EcgSweepCanvas({
   const lastFrameTimeRef = useRef<number | null>(null);
   const sampleCarryRef = useRef(0);
   const valueRangeRef = useRef({ min: 0, max: 240 });
+  const filledRef = useRef(false);
   const streamKey = `${frames.at(-1)?.device_id || frames[0]?.device_id || ''}|${frames.at(-1)?.mode || frames[0]?.mode || ''}`;
 
   useEffect(() => {
@@ -167,6 +168,7 @@ function EcgSweepCanvas({
     cursorRef.current = 0;
     lastFrameTimeRef.current = null;
     sampleCarryRef.current = 0;
+    filledRef.current = false;
   }, [streamKey]);
 
   useEffect(() => {
@@ -245,11 +247,18 @@ function EcgSweepCanvas({
       const fs = Math.max(1, samplingRate || 250);
       const targetQueuedSamples = Math.max(32, Math.round(fs * ECG_TARGET_DELAY_SECONDS));
       const queueSize = queueRef.current.length;
-      const adaptiveRate = queueSize > targetQueuedSamples * 1.5
-        ? fs * 1.25
-        : queueSize < targetQueuedSamples * 0.45
-          ? fs * 0.82
-          : fs;
+      if (!filledRef.current && queueSize >= targetQueuedSamples) {
+        filledRef.current = true;
+      }
+      // Lần đầu sau khi reset stream (đổi mode/device), bỏ qua bước "chờ đầy
+      // buffer" để vẽ ngay theo nhịp thực thay vì chạy chậm rồi mới mượt.
+      const adaptiveRate = !filledRef.current
+        ? fs
+        : queueSize > targetQueuedSamples * 1.5
+          ? fs * 1.25
+          : queueSize < targetQueuedSamples * 0.45
+            ? fs * 0.82
+            : fs;
       sampleCarryRef.current += elapsed * adaptiveRate;
       const consumeCount = Math.min(queueRef.current.length, Math.floor(sampleCarryRef.current));
       sampleCarryRef.current -= consumeCount;
