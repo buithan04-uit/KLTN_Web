@@ -177,7 +177,7 @@ function EcgSweepCanvas({
   const lastFrameTimeRef = useRef<number | null>(null);
   const sampleCarryRef = useRef(0);
   const valueRangeRef = useRef({ min: 0, max: 240 });
-  const streamKey = frames.at(-1)?.device_id || frames[0]?.device_id || '';
+  const streamKey = `${frames.at(-1)?.device_id || frames[0]?.device_id || ''}|${frames.at(-1)?.mode || frames[0]?.mode || ''}`;
 
   useEffect(() => {
     queueRef.current = [];
@@ -898,13 +898,16 @@ export default function DoctorMonitorPage() {
     return Array.from(sweepSlots.values()).sort((a, b) => a.i - b.i);
   }, [realtimeHistoryRows]);
 
-  const doctorEcgFrames = useMemo(
-    () => realtimeHistoryRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points)),
-    [realtimeHistoryRows]
-  );
+  const doctorEcgFrames = useMemo(() => {
+    const frameRecords = realtimeHistoryRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points));
+    const latestMode = frameRecords[0]?.mode ?? null;
+    // Chỉ giữ các frame cùng mode với frame mới nhất (tránh trộn ecg/measure_all
+    // khi chuyển mode, gây giật/lag cho đến khi reload trang).
+    return frameRecords.filter((r) => (r.mode ?? null) === latestMode);
+  }, [realtimeHistoryRows]);
 
   const doctorEcgMeta = useMemo(() => {
-    const frameRecords = realtimeHistoryRows.filter((r) => r.type === 'ecg_frame' && Array.isArray(r.ecg_points));
+    const frameRecords = doctorEcgFrames;
     const latestFrameRecord = frameRecords[0];
     const displayFrameRecords = frameRecords;
     const latestWaveRecord = latestFrameRecord;
@@ -951,7 +954,7 @@ export default function DoctorMonitorPage() {
         : [yMin - padY, yMax + padY] as [number, number],
       quality: getEcgQuality(latestWaveRecord?.clip_pct),
     };
-  }, [doctorEcgData, realtimeHistoryRows]);
+  }, [doctorEcgData, doctorEcgFrames]);
 
   useEffect(() => {
     if (!deviceId || !consentToken || !user || (user.role !== 'doctor' && user.role !== 'admin')) return;

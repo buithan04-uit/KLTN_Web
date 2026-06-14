@@ -158,7 +158,7 @@ function EcgSweepCanvas({
   const lastFrameTimeRef = useRef<number | null>(null);
   const sampleCarryRef = useRef(0);
   const valueRangeRef = useRef({ min: 0, max: 240 });
-  const streamKey = frames.at(-1)?.device_id || frames[0]?.device_id || '';
+  const streamKey = `${frames.at(-1)?.device_id || frames[0]?.device_id || ''}|${frames.at(-1)?.mode || frames[0]?.mode || ''}`;
 
   useEffect(() => {
     queueRef.current = [];
@@ -468,7 +468,10 @@ function VitalCard({ label, value, field, icon, data, dataKey }: VitalCardProps)
 function EcgCard({ data }: { data: HealthRecord[] }) {
   const frameRecords = data.filter((r) => (r.type === 'ecg_frame' || r.note === 'ecg_frame') && Array.isArray(r.ecg_points));
   const latestFrameRecord = frameRecords.at(-1);
-  const displayFrameRecords = frameRecords;
+  const latestMode = latestFrameRecord?.mode ?? null;
+  // Chỉ lấy các frame cùng mode với frame mới nhất (tránh trộn ecg/measure_all
+  // khi chuyển mode, gây giật/lag cho đến khi reload trang).
+  const displayFrameRecords = frameRecords.filter((r) => (r.mode ?? null) === latestMode);
   const latestWaveRecord = latestFrameRecord;
   const isFrame = latestWaveRecord?.type === 'ecg_frame' || latestWaveRecord?.note === 'ecg_frame';
   const isMeasureAllFrame = latestWaveRecord?.mode === 'measure_all' || latestWaveRecord?.mode === 'measureall';
