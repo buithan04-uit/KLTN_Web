@@ -237,7 +237,7 @@ export default function AdminUsersPage() {
       )}
 
       {success && (
-        <div className="p-4 bg-green-50 border border-green-200 rounded-xl text-green-800">
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800">
           {success}
           <button
             onClick={() => setSuccess(null)}
@@ -337,24 +337,25 @@ export default function AdminUsersPage() {
       )}
 
       {openDialog === 'delete' && selectedUser && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-sm">
-            <h2 className="text-xl font-bold mb-4">Deactivate User</h2>
-            <p className="text-gray-600 mb-6">
-              Are you sure you want to deactivate user <strong>{selectedUser.email}</strong>?
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-6 max-w-sm w-full space-y-4">
+            <h2 className="text-lg font-bold text-slate-800">Vô hiệu hóa tài khoản</h2>
+            <p className="text-sm text-slate-600">
+              Bạn có chắc muốn vô hiệu hóa tài khoản{' '}
+              <strong className="text-slate-800">{selectedUser.email}</strong>? Người dùng sẽ không thể đăng nhập cho đến khi được kích hoạt lại.
             </p>
-            <div className="flex gap-4 justify-end">
+            <div className="flex gap-3 justify-end pt-2">
               <button
                 onClick={() => setOpenDialog(null)}
-                className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+                className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
               >
-                Cancel
+                Hủy
               </button>
               <button
                 onClick={handleDeleteUser}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                className="px-4 py-2 rounded-xl bg-red-500 text-sm font-semibold text-white hover:bg-red-600 transition"
               >
-                Deactivate
+                Vô hiệu hóa
               </button>
             </div>
           </div>
@@ -362,29 +363,28 @@ export default function AdminUsersPage() {
       )}
 
       {openDialog === 'role' && selectedUser && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-sm">
-            <h2 className="text-xl font-bold mb-4">Change Role</h2>
-            <p className="text-gray-600 mb-4">
-              Current role: <strong>{selectedUser.role}</strong>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-6 max-w-sm w-full space-y-4">
+            <h2 className="text-lg font-bold text-slate-800">Đổi vai trò</h2>
+            <p className="text-sm text-slate-500">
+              Vai trò hiện tại:{' '}
+              <span className="font-semibold text-slate-700">{selectedUser.role}</span>
             </p>
             <select
               defaultValue={selectedUser.role}
-              onChange={(e) => {
-                void handleChangeRole(e.target.value);
-              }}
-              className="w-full px-3 py-2 border rounded-lg mb-6"
+              onChange={(e) => { void handleChangeRole(e.target.value); }}
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-400"
             >
-              <option value="admin">Admin</option>
-              <option value="doctor">Doctor</option>
-              <option value="patient">Patient</option>
+              <option value="admin">Quản trị viên</option>
+              <option value="doctor">Bác sĩ</option>
+              <option value="patient">Bệnh nhân</option>
             </select>
-            <div className="flex gap-4 justify-end">
+            <div className="flex justify-end pt-2">
               <button
                 onClick={() => setOpenDialog(null)}
-                className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+                className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
               >
-                Close
+                Đóng
               </button>
             </div>
           </div>
@@ -392,26 +392,25 @@ export default function AdminUsersPage() {
       )}
 
       {openDialog === 'password' && selectedUser && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-sm">
-            <h2 className="text-xl font-bold mb-4">Reset Password</h2>
-            <p className="text-gray-600 mb-6">
-              Reset password for <strong>{selectedUser.email}</strong>?
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-6 max-w-sm w-full space-y-4">
+            <h2 className="text-lg font-bold text-slate-800">Đặt lại mật khẩu</h2>
+            <p className="text-sm text-slate-600">
+              Hệ thống sẽ tạo mật khẩu tạm thời cho tài khoản{' '}
+              <strong className="text-slate-800">{selectedUser.email}</strong>. Yêu cầu người dùng đổi mật khẩu sau khi đăng nhập lại.
             </p>
-            <div className="flex gap-4 justify-end">
+            <div className="flex gap-3 justify-end pt-2">
               <button
                 onClick={() => setOpenDialog(null)}
-                className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+                className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
               >
-                Cancel
+                Hủy
               </button>
               <button
-                onClick={() => {
-                  void handleResetPassword();
-                }}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                onClick={() => { void handleResetPassword(); }}
+                className="px-4 py-2 rounded-xl bg-sky-500 text-sm font-semibold text-white hover:bg-sky-600 transition"
               >
-                Reset Password
+                Xác nhận đặt lại
               </button>
             </div>
           </div>
@@ -419,28 +418,28 @@ export default function AdminUsersPage() {
       )}
 
       {openDialog === 'status' && selectedUser && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-sm">
-            <h2 className="text-xl font-bold mb-4">Change Account Status</h2>
-            <p className="text-gray-600 mb-6">
-              {selectedUser.is_active
-                ? `Disable account ${selectedUser.email}?`
-                : `Enable account ${selectedUser.email}?`}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-6 max-w-sm w-full space-y-4">
+            <h2 className="text-lg font-bold text-slate-800">Thay đổi trạng thái tài khoản</h2>
+            <p className="text-sm text-slate-600">
+              {selectedUser.is_active ? (
+                <>Vô hiệu hóa tài khoản <strong className="text-slate-800">{selectedUser.email}</strong>? Người dùng sẽ không thể đăng nhập.</>
+              ) : (
+                <>Kích hoạt lại tài khoản <strong className="text-slate-800">{selectedUser.email}</strong>?</>
+              )}
             </p>
-            <div className="flex gap-4 justify-end">
+            <div className="flex gap-3 justify-end pt-2">
               <button
                 onClick={() => setOpenDialog(null)}
-                className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+                className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition"
               >
-                Cancel
+                Hủy
               </button>
               <button
-                onClick={() => {
-                  void handleToggleStatus();
-                }}
-                className={`px-4 py-2 text-white rounded-lg ${selectedUser.is_active ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                onClick={() => { void handleToggleStatus(); }}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold text-white transition ${selectedUser.is_active ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-500 hover:bg-emerald-600'}`}
               >
-                {selectedUser.is_active ? 'Disable' : 'Enable'}
+                {selectedUser.is_active ? 'Vô hiệu hóa' : 'Kích hoạt'}
               </button>
             </div>
           </div>

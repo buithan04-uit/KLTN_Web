@@ -212,6 +212,3 @@ AS $$
   GROUP BY 1
   ORDER BY 1 ASC;
 $$;
-
--- Đảm bảo password DB đúng
-ALTER USER admin WITH PASSWORD '123456';

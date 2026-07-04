@@ -27,6 +27,9 @@ database/data/
 mosquitto/data/
 mosquitto/log/
 
+# MQTT credential hashes — never commit, rotate via setup-mqtt-auth.ps1
+mosquitto/config/passwd
+
 # Upload/runtime files
 backend/uploads/
 

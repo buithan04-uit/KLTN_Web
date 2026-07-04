@@ -277,7 +277,11 @@ export default function MyDevicesPage() {
 
   // Khởi tạo socket connection một lần
   useEffect(() => {
-    const socket = io(API_URL, { transports: ['websocket'] });
+    const socket = io(API_URL, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      timeout: 10_000,
+    });
     socketRef.current = socket;
     return () => { socket.disconnect(); };
   }, []);

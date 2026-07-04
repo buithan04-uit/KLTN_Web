@@ -65,7 +65,7 @@ const updateProfile = async (req, res) => {
     const VALID_BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
     const VALID_GENDERS = ['male', 'female', 'other'];
     if (gender && !VALID_GENDERS.includes(String(gender).toLowerCase())) {
-        return res.status(400).json({ error: 'Gioi tinh khong hop le' });
+        return res.status(400).json({ error: 'Giới tính không hợp lệ' });
     }
     if (blood_type && !VALID_BLOOD_TYPES.includes(blood_type)) {
         return res.status(400).json({ error: 'Nhóm máu không hợp lệ' });

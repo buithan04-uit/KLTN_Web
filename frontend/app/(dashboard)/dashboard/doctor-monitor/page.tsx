@@ -24,7 +24,6 @@ type RealtimePayload = {
   n?: number | null;
   r_peak_index?: number | null;
   normalized?: boolean | null;
-  mode?: string | null;
   ecg_unit?: string | null;
   ecg_source?: string | null;
   ecg_display?: string | null;
@@ -127,27 +126,27 @@ function average(values: number[]): number {
 
 function getEcgQuality(clipPct?: number | null) {
   if (typeof clipPct !== 'number') {
-    return { label: 'Chua ro chat luong', className: 'bg-slate-100 text-slate-600', hint: 'Firmware chua gui clip_pct cho frame nay.' };
+    return { label: 'Chưa rõ chất lượng', className: 'bg-slate-100 text-slate-600', hint: 'Firmware chưa gửi clip_pct cho frame này.' };
   }
   if (clipPct <= 10) {
-    return { label: 'Tin hieu tot', className: 'bg-emerald-100 text-emerald-700', hint: 'It cat bien, co the quan sat dang song.' };
+    return { label: 'Tín hiệu tốt', className: 'bg-emerald-100 text-emerald-700', hint: 'Ít cắt biên, có thể quan sát dạng sóng.' };
   }
   if (clipPct < 30) {
-    return { label: 'Nhieu vua', className: 'bg-amber-100 text-amber-700', hint: 'Xem duoc nhip, han che doc bien do.' };
+    return { label: 'Nhiễu vừa', className: 'bg-amber-100 text-amber-700', hint: 'Xem được nhịp, hạn chế đọc biên độ.' };
   }
-  return { label: 'Cat bien manh', className: 'bg-red-100 text-red-700', hint: 'Khong nen dung de nhan dinh ECG chuyen mon.' };
+  return { label: 'Cắt biên mạnh', className: 'bg-red-100 text-red-700', hint: 'Không nên dùng để nhận định ECG chuyên môn.' };
 }
 
 function getRecordEcgSummary(record: DoctorHistoryRow) {
   const pointsCount = normalizeNumberArray(record.ecg_points)?.length ?? 0;
   if (record.type === 'ecg_frame' || record.note === 'ecg_frame') {
     return {
-      label: `ECG frame${pointsCount ? ` (${pointsCount} mau)` : ''}`,
-      detail: record.clip_pct !== null && record.clip_pct !== undefined ? `clip ${record.clip_pct.toFixed(0)}%` : 'dang song',
+      label: `ECG frame${pointsCount ? ` (${pointsCount} mẫu)` : ''}`,
+      detail: record.clip_pct !== null && record.clip_pct !== undefined ? `clip ${record.clip_pct.toFixed(0)}%` : 'đang sóng',
     };
   }
   if (record.type === 'ecg_ai_window' || record.note === 'ecg_ai_window_normalized') {
-    return { label: 'AI window', detail: pointsCount ? `${pointsCount} mau` : 'input AI' };
+    return { label: 'AI window', detail: pointsCount ? `${pointsCount} mẫu` : 'input AI' };
   }
   return {
     label: record.ecg_value !== null && record.ecg_value !== undefined ? record.ecg_value.toFixed(2) : '-',
@@ -382,18 +381,18 @@ const VITAL_CONFIG = {
 } as const;
 
 const AI_STATUS_STYLES: Record<AiStatus, { box: string; text: string; badge: string; label: string }> = {
-  normal: { box: 'border-emerald-200 bg-emerald-50', text: 'text-emerald-800', badge: 'bg-emerald-100 text-emerald-700', label: 'On dinh' },
-  warning: { box: 'border-amber-200 bg-amber-50', text: 'text-amber-800', badge: 'bg-amber-100 text-amber-700', label: 'Can theo doi' },
-  danger: { box: 'border-red-200 bg-red-50', text: 'text-red-800', badge: 'bg-red-100 text-red-700', label: 'Can xem xet' },
-  unknown: { box: 'border-slate-200 bg-white', text: 'text-slate-700', badge: 'bg-slate-100 text-slate-600', label: 'Chua du du lieu' },
+  normal: { box: 'border-emerald-200 bg-emerald-50', text: 'text-emerald-800', badge: 'bg-emerald-100 text-emerald-700', label: 'Ổn định' },
+  warning: { box: 'border-amber-200 bg-amber-50', text: 'text-amber-800', badge: 'bg-amber-100 text-amber-700', label: 'Cần theo dõi' },
+  danger: { box: 'border-red-200 bg-red-50', text: 'text-red-800', badge: 'bg-red-100 text-red-700', label: 'Cần xem xét' },
+  unknown: { box: 'border-slate-200 bg-white', text: 'text-slate-700', badge: 'bg-slate-100 text-slate-600', label: 'Chưa đủ dữ liệu' },
 };
 
 const ECG_LABELS: Record<string, string> = {
-  N: 'Nhip binh thuong',
-  S: 'Nghi ngoai tam thu tren that',
-  V: 'Nghi ngoai tam thu that',
-  F: 'Nghi nhip ket hop',
-  Q: 'Khong xac dinh',
+  N: 'Nhịp bình thường',
+  S: 'Nghi ngoại tâm thu trên thất',
+  V: 'Nghi ngoại tâm thu thất',
+  F: 'Nghi nhịp kết hợp',
+  Q: 'Không xác định',
 };
 
 function formatAiConfidence(value: number | null | undefined) {
@@ -402,20 +401,20 @@ function formatAiConfidence(value: number | null | undefined) {
 }
 
 function getReadableModelName(modelName: string) {
-  if (modelName === 'vitals-risk-assessment' || modelName === 'vitals-risk') return 'Nguy co sinh hieu';
-  if (modelName === 'ecg-arrhythmia') return 'Dien tim ECG';
+  if (modelName === 'vitals-risk-assessment' || modelName === 'vitals-risk') return 'Nguy cơ sinh hiệu';
+  if (modelName === 'ecg-arrhythmia') return 'Điện tim ECG';
   return modelName;
 }
 
 function getReadablePrediction(modelName: string, label: string, confidence?: number | null) {
   if (modelName === 'ecg-arrhythmia') {
-    if (typeof confidence === 'number' && confidence < 0.6) return `Chua du tin cay (${label})`;
-    if (/uncertain/i.test(label)) return 'ECG chua du tin cay';
-    if (/possible/i.test(label)) return label.replace(/possible/i, 'Nghi ngo');
+    if (typeof confidence === 'number' && confidence < 0.6) return `Chưa đủ tin cậy (${label})`;
+    if (/uncertain/i.test(label)) return 'ECG chưa đủ tin cậy';
+    if (/possible/i.test(label)) return label.replace(/possible/i, 'Nghi ngờ');
     return ECG_LABELS[label] ? `${label} - ${ECG_LABELS[label]}` : label;
   }
-  if (/low/i.test(label)) return 'Nguy co thap';
-  if (/high|danger/i.test(label)) return 'Nguy co cao';
+  if (/low/i.test(label)) return 'Nguy cơ thấp';
+  if (/high|danger/i.test(label)) return 'Nguy cơ cao';
   return label;
 }
 
@@ -548,7 +547,7 @@ function DeviceSummaryCard({
 
 export default function DoctorMonitorPage() {
   const { user } = useAuth();
-  const [connected, setConnected] = useState(false);
+  const [socketStatus, setSocketStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
   const [live, setLive] = useState<RealtimePayload | null>(null);
   const [events, setEvents] = useState<RealtimePayload[]>([]);
   const [ecgEvents, setEcgEvents] = useState<RealtimePayload[]>([]);
@@ -645,7 +644,7 @@ export default function DoctorMonitorPage() {
       setLive(null);
       setEvents([]);
       setEcgEvents([]);
-      setConnected(false);
+      setSocketStatus('idle');
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Xác thực mã thất bại');
     } finally {
@@ -677,7 +676,7 @@ export default function DoctorMonitorPage() {
       setLive(null);
       setEvents([]);
       setEcgEvents([]);
-      setConnected(false);
+      setSocketStatus('idle');
       setDeviceOnline(null);
       setError('');
     }
@@ -994,7 +993,9 @@ export default function DoctorMonitorPage() {
     setDeviceOnline(null);
 
     const socket = io(API_URL, {
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      timeout: 10_000,
       auth: {
         consentToken,
       },
@@ -1004,16 +1005,19 @@ export default function DoctorMonitorPage() {
     });
 
     socketRef.current = socket;
+    setSocketStatus('connecting');
+
+    socket.io.on('reconnect_attempt', () => setSocketStatus('connecting'));
 
     socket.on('connect', () => {
-      setConnected(true);
+      setSocketStatus('connected');
       setError('');
       socket.emit('subscribe-device', deviceId);
     });
 
     socket.on('connect_error', (err: { message?: string }) => {
       const msg = err?.message || 'Kết nối realtime thất bại';
-      setConnected(false);
+      setSocketStatus('disconnected');
       if (/auth failed|expired|revoked|hết hạn|thu hồi|consent/i.test(msg) && deviceId) {
         setRevokedNotif(`Phiên truy cập cho thiết bị ${deviceId} không còn hợp lệ và đã được gỡ.`);
         removeSession(deviceId);
@@ -1022,7 +1026,7 @@ export default function DoctorMonitorPage() {
       setError(msg);
     });
 
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('disconnect', () => setSocketStatus('disconnected'));
 
     socket.on('subscription-error', (payload: { message?: string }) => {
       const msg = payload?.message ?? 'Không thể subscribe realtime';
@@ -1239,7 +1243,7 @@ export default function DoctorMonitorPage() {
                         setEvents([]);
                         setEcgEvents([]);
                         setError('');
-                        setConnected(false);
+                        setSocketStatus('idle');
                         setDeviceOnline(null);
                       }}
                       className="px-3 py-2 pr-7 text-left w-full"
@@ -1284,7 +1288,7 @@ export default function DoctorMonitorPage() {
                 setEvents([]);
                 setEcgEvents([]);
                 setError('');
-                setConnected(false);
+                setSocketStatus('idle');
                 setDeviceOnline(null);
               }}
             />
@@ -1305,8 +1309,15 @@ export default function DoctorMonitorPage() {
             Thiết bị: <span className="font-mono">{deviceId}</span>
           </p>
         </div>
-        <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold ${connected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-          <PlugZap className="w-4 h-4" /> {connected ? 'Realtime Connected' : 'Disconnected'}
+        <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold ${
+          socketStatus === 'connected' ? 'bg-emerald-100 text-emerald-700'
+          : socketStatus === 'connecting' ? 'bg-amber-100 text-amber-700'
+          : 'bg-slate-100 text-slate-600'
+        }`}>
+          <PlugZap className={`w-4 h-4 ${socketStatus === 'connecting' ? 'animate-pulse' : ''}`} />
+          {socketStatus === 'connected' ? 'Realtime Connected'
+           : socketStatus === 'connecting' ? 'Đang kết nối...'
+           : 'Disconnected'}
         </div>
         {deviceOnline !== null && (
           <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${
@@ -1358,14 +1369,78 @@ export default function DoctorMonitorPage() {
         </div>
       </div>
 
+      <section className={`rounded-2xl border p-5 shadow-sm ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].box}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-white/80 p-2 border border-white">
+              <BrainCircuit className={`w-5 h-5 ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].text}`} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-slate-800">AI đánh giá nguy cơ sinh hiệu</h2>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].badge}`}>
+                  {AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].label}
+                </span>
+              </div>
+              <p className={`mt-1 text-sm font-medium ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].text}`}>
+                {isAiSummaryLoading ? 'Đang tổng hợp dữ liệu AI...' : isAiSummaryError ? 'Không thể tải tổng hợp AI' : aiSummary?.headline || 'Chưa có kết quả AI'}
+              </p>
+              {aiSummary?.summary && <p className="mt-1 text-sm text-slate-600">{aiSummary.summary}</p>}
+              {aiSummary?.status_reason && <p className="mt-1 text-xs text-slate-500">Lý do: {aiSummary.status_reason}</p>}
+              <p className="mt-1 text-xs text-slate-500">Rule-based có thể chạy với dữ liệu cảm biến; model đầy đủ cần đủ hồ sơ và huyết áp nhập ngoài.</p>
+            </div>
+          </div>
+          <div className="text-right text-xs text-slate-500">
+            <div>{aiSummary?.window.sample_count ?? 0} kết quả AI gần nhất</div>
+            {aiSummary?.window.to && <div>Cập nhật {new Date(aiSummary.window.to).toLocaleTimeString('vi-VN')}</div>}
+          </div>
+        </div>
+
+        {aiSummary && Object.keys(aiSummary.models).length > 0 && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+            {Object.entries(aiSummary.models).map(([modelName, model]) => {
+              const styles = AI_STATUS_STYLES[model.status];
+              const confidence = formatAiConfidence(model.latest.confidence);
+              return (
+                <div key={modelName} className="rounded-xl border border-white/80 bg-white/80 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-700">
+                      {getReadableModelName(modelName)}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}>{styles.label}</span>
+                  </div>
+                  <div className="mt-2 flex items-end gap-2">
+                    <span className={`text-xl font-bold ${styles.text}`}>
+                      {getReadablePrediction(modelName, model.latest.prediction_label, model.latest.confidence)}
+                    </span>
+                    <span className="text-xs text-slate-500 mb-1">độ tin cậy {confidence}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {modelName === 'ecg-arrhythmia'
+                      ? 'Chỉ đánh giá beat ECG đủ điều kiện; không kết luận bệnh lý khi tín hiệu bị cắt biên hoặc nhiễu.'
+                      : 'Tổng hợp sinh hiệu gần đây để ưu tiên theo dõi, không thay thế chẩn đoán y khoa.'}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="mt-4 text-xs text-slate-500">
+          {aiSummary?.disclaimer || 'AI chỉ hỗ trợ theo dõi nguy cơ sinh hiệu, cần đối chiếu với lâm sàng và dữ liệu đo thực tế.'}
+        </p>
+        <a href="/dashboard/ai-diagnosis" className="mt-3 inline-flex text-sm font-semibold text-sky-700 hover:text-sky-800">
+          Xem lịch sử đánh giá và dữ liệu đầu vào
+        </a>
+      </section>
+
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold text-slate-800">ECG (điện tim)</h2>
           {doctorEcgMeta.isFrame && <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${doctorEcgMeta.quality.className}`}>{doctorEcgMeta.quality.label}</span>}
           <span className="ml-auto text-xs text-slate-500">
             {doctorEcgMeta.isFrame
-              ? `${doctorEcgMeta.sampleCount} mau ECG | ${doctorEcgMeta.isLcdDisplay ? 'LCD' : 'mV'} | ${doctorEcgMeta.mode ?? 'ecg'} | ${doctorEcgMeta.samplingRate}Hz | HR ${doctorEcgMeta.heartRate ?? '-'}`
-              : 'Dang cho ECG frame realtime'}
+              ? `${doctorEcgMeta.sampleCount} mẫu ECG | ${doctorEcgMeta.isLcdDisplay ? 'LCD' : 'mV'} | ${doctorEcgMeta.mode ?? 'ecg'} | ${doctorEcgMeta.samplingRate}Hz | HR ${doctorEcgMeta.heartRate ?? '-'}`
+              : 'Đang chờ ECG frame realtime'}
           </span>
           <button
             type="button"
@@ -1437,70 +1512,6 @@ export default function DoctorMonitorPage() {
           <span className="font-semibold">Clinical Alert:</span> {clinical.ai_summary.clinical_alert}
         </div>
       )}
-
-      <section className={`rounded-2xl border p-5 ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].box}`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-white/80 p-2 border border-white">
-              <BrainCircuit className={`w-5 h-5 ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].text}`} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold text-slate-800">AI danh gia nguy co sinh hieu</h2>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].badge}`}>
-                  {AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].label}
-                </span>
-              </div>
-              <p className={`mt-1 text-sm font-medium ${AI_STATUS_STYLES[aiSummary?.overall_status ?? 'unknown'].text}`}>
-                {isAiSummaryLoading ? 'Dang tong hop du lieu AI...' : isAiSummaryError ? 'Khong the tai tong hop AI' : aiSummary?.headline || 'Chua co ket qua AI'}
-              </p>
-              {aiSummary?.summary && <p className="mt-1 text-sm text-slate-600">{aiSummary.summary}</p>}
-              {aiSummary?.status_reason && <p className="mt-1 text-xs text-slate-500">Ly do: {aiSummary.status_reason}</p>}
-              <p className="mt-1 text-xs text-slate-500">Rule-based co the chay voi du lieu cam bien; model full can du ho so va huyet ap nhap ngoai.</p>
-            </div>
-          </div>
-          <div className="text-right text-xs text-slate-500">
-            <div>{aiSummary?.window.sample_count ?? 0} ket qua AI gan nhat</div>
-            {aiSummary?.window.to && <div>Cap nhat {new Date(aiSummary.window.to).toLocaleTimeString('vi-VN')}</div>}
-          </div>
-        </div>
-
-        {aiSummary && Object.keys(aiSummary.models).length > 0 && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-            {Object.entries(aiSummary.models).map(([modelName, model]) => {
-              const styles = AI_STATUS_STYLES[model.status];
-              const confidence = formatAiConfidence(model.latest.confidence);
-              return (
-                <div key={modelName} className="rounded-xl border border-white/80 bg-white/80 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-slate-700">
-                      {getReadableModelName(modelName)}
-                    </span>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${styles.badge}`}>{styles.label}</span>
-                  </div>
-                  <div className="mt-2 flex items-end gap-2">
-                    <span className={`text-xl font-bold ${styles.text}`}>
-                      {getReadablePrediction(modelName, model.latest.prediction_label, model.latest.confidence)}
-                    </span>
-                    <span className="text-xs text-slate-500 mb-1">tin cay {confidence}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {modelName === 'ecg-arrhythmia'
-                      ? 'Chi danh gia beat ECG du dieu kien; khong ket luan benh ly khi tin hieu bi cat bien hoac nhieu.'
-                      : 'Tong hop sinh hieu gan day de uu tien theo doi, khong thay the chan doan y khoa.'}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <p className="mt-4 text-xs text-slate-500">
-          {aiSummary?.disclaimer || 'AI chi ho tro theo doi nguy co sinh hieu, can doi chieu voi lam sang va du lieu do thuc te.'}
-        </p>
-        <a href="/dashboard/ai-diagnosis" className="mt-3 inline-flex text-sm font-semibold text-sky-700 hover:text-sky-800">
-          Xem lich su danh gia va du lieu dau vao
-        </a>
-      </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-slate-800 mb-3">Biểu đồ realtime / xu hướng</h2>

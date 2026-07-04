@@ -40,6 +40,8 @@ const AiPredictionModel = {
         limit = 20,
         model_name = '',
         requireEvidence = false,
+        from = null,
+        to = null,
     } = {}) => {
         const safePage = Math.max(Number(page) || 1, 1);
         const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
@@ -55,6 +57,19 @@ const AiPredictionModel = {
 
         if (requireEvidence) {
             where += ' AND input_snapshot IS NOT NULL';
+        }
+
+        // Filter by when the vitals were actually measured (health_time), not when the
+        // prediction row happened to be inserted — those can diverge a lot for manual
+        // re-runs on older health records.
+        if (from) {
+            where += ` AND COALESCE(health_time, created_at) >= $${idx++}`;
+            params.push(from);
+        }
+
+        if (to) {
+            where += ` AND COALESCE(health_time, created_at) <= $${idx++}`;
+            params.push(to);
         }
 
         try {

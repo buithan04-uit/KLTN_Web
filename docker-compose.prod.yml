@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${DB_USER:-admin}
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-123456}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env before deploying}
       - POSTGRES_DB=${DB_NAME:-telehealth_system}
     ports:
       - "127.0.0.1:5432:5432"
@@ -39,7 +39,7 @@ services:
     networks:
       - telehealth
     healthcheck:
-      test: ["CMD", "mosquitto_pub", "-h", "127.0.0.1", "-u", "server", "-P", "111111", "-t", "healthcheck", "-m", "ping", "--quiet"]
+      test: ["CMD", "mosquitto_pub", "-h", "127.0.0.1", "-u", "${MQTT_USERNAME:-server}", "-P", "${MQTT_PASSWORD:?Set MQTT_PASSWORD in .env before deploying}", "-t", "healthcheck", "-m", "ping", "--quiet"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -58,7 +58,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=5000
-      - DATABASE_URL=postgres://admin:123456@db:5432/telehealth_system  # hardcode thẳng
+      - DATABASE_URL=postgres://${DB_USER:-admin}:${DB_PASSWORD:?Set DB_PASSWORD in .env before deploying}@db:5432/${DB_NAME:-telehealth_system}
       - MQTT_BROKER=mqtt://mosquitto:1883
       - FRONTEND_URL=http://64.176.80.227:3001
     depends_on:

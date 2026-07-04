@@ -8,7 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import {
   User, Camera, Save, Loader2, CheckCircle, AlertCircle,
   Phone, Calendar, Droplets, Ruler, Weight, FileText,
-  Briefcase, GraduationCap, Building2, BookOpen,
+  Briefcase, GraduationCap, Building2, BookOpen, Info,
 } from 'lucide-react';
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const;
@@ -234,6 +234,21 @@ function ProfileForm({ profile, onRefetch }: { profile: ExtendedProfile; onRefet
           className={`${inputCls} resize-none`}
         />
       </Field>
+
+      {/* Nudge: blood pressure needed for AI vitals-risk model */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
+        <Info className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+        <p className="text-sm text-amber-800">
+          <span className="font-semibold">AI đánh giá nguy cơ sinh hiệu cần huyết áp.</span>{' '}
+          Huyết áp không đo tự động từ cảm biến — bạn cần nhập thủ công sau mỗi lần đo tại nhà.{' '}
+          <a
+            href="/dashboard/ai-diagnosis"
+            className="underline font-semibold hover:text-amber-900"
+          >
+            Nhập huyết áp tại Chẩn đoán AI →
+          </a>
+        </p>
+      </div>
       </>)}
 
       {profile.role === 'doctor' && (<>

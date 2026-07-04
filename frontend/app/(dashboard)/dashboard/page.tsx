@@ -83,12 +83,12 @@ function getRecordEcgSummary(record: HealthRecord) {
   const type = record.type || (record.note === 'ecg_frame' ? 'ecg_frame' : record.note === 'ecg_ai_window_normalized' ? 'ecg_ai_window' : null);
   if (type === 'ecg_frame') {
     return {
-      label: `ECG frame${pointsCount ? ` (${pointsCount} mau)` : ''}`,
-      detail: record.clip_pct !== null && record.clip_pct !== undefined ? `clip ${record.clip_pct.toFixed(0)}%` : 'dang song',
+      label: `ECG frame${pointsCount ? ` (${pointsCount} mẫu)` : ''}`,
+      detail: record.clip_pct !== null && record.clip_pct !== undefined ? `clip ${record.clip_pct.toFixed(0)}%` : 'đang sóng',
     };
   }
   if (type === 'ecg_ai_window') {
-    return { label: 'AI window', detail: pointsCount ? `${pointsCount} mau` : 'input AI' };
+    return { label: 'AI window', detail: pointsCount ? `${pointsCount} mẫu` : 'input AI' };
   }
   return {
     label: record.ecg_value !== null && record.ecg_value !== undefined ? record.ecg_value.toFixed(2) : '-',
@@ -510,8 +510,8 @@ function EcgCard({ data }: { data: HealthRecord[] }) {
         {isMeasureAllFrame && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">MeasureAll</span>}
         <span className="ml-auto text-xs text-slate-400">
           {isFrame
-            ? `${visibleSampleCount} mau ECG | ${isLcdDisplay ? 'LCD' : 'mV'} | ${latestWaveRecord?.mode ?? 'ecg'} | ${latestWaveRecord?.ecg_sampling_rate ?? 250}Hz | HR ${latestWaveRecord?.heart_rate ?? '-'}`
-            : 'Dang cho ECG frame realtime'}
+            ? `${visibleSampleCount} mẫu ECG | ${isLcdDisplay ? 'LCD' : 'mV'} | ${latestWaveRecord?.mode ?? 'ecg'} | ${latestWaveRecord?.ecg_sampling_rate ?? 250}Hz | HR ${latestWaveRecord?.heart_rate ?? '-'}`
+            : 'Đang chờ ECG frame realtime'}
         </span>
         <button
           type="button"
@@ -847,7 +847,11 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!deviceIdKey) return;
     const devIds = deviceIdKey.split(',');
-    const sock = io(API_URL, { transports: ['websocket'] });
+    const sock = io(API_URL, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      timeout: 10_000,
+    });
     for (const devId of devIds) {
       sock.on(
         `device-status-${devId}`,
@@ -1135,32 +1139,44 @@ export default function DashboardPage() {
         }
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <VitalCard
-          label="Nhịp tim"
-          value={latest?.heart_rate ?? null}
-          field="heart_rate"
-          icon={<Heart className="w-5 h-5" fill="currentColor" />}
-          data={vitalsRecords}
-          dataKey="heart_rate"
-        />
-        <VitalCard
-          label="SpO₂ (Oxy máu)"
-          value={latest?.spo2 ?? null}
-          field="spo2"
-          icon={<Droplets className="w-5 h-5" />}
-          data={vitalsRecords}
-          dataKey="spo2"
-        />
-        <VitalCard
-          label="Nhiệt độ cơ thể"
-          value={latest?.temperature ?? null}
-          field="temperature"
-          icon={<Thermometer className="w-5 h-5" />}
-          data={vitalsRecords}
-          dataKey="temperature"
-        />
-      </div>
+      {isLoading && !records.length ? (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {(['Nhịp tim', 'SpO₂ (Oxy máu)', 'Nhiệt độ cơ thể'] as const).map((label) => (
+            <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-5 flex flex-col gap-3 animate-pulse">
+              <div className="h-4 bg-slate-200 rounded w-1/2" />
+              <div className="h-8 bg-slate-200 rounded w-1/3" />
+              <div className="h-20 bg-slate-200 rounded" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <VitalCard
+            label="Nhịp tim"
+            value={latest?.heart_rate ?? null}
+            field="heart_rate"
+            icon={<Heart className="w-5 h-5" fill="currentColor" />}
+            data={vitalsRecords}
+            dataKey="heart_rate"
+          />
+          <VitalCard
+            label="SpO₂ (Oxy máu)"
+            value={latest?.spo2 ?? null}
+            field="spo2"
+            icon={<Droplets className="w-5 h-5" />}
+            data={vitalsRecords}
+            dataKey="spo2"
+          />
+          <VitalCard
+            label="Nhiệt độ cơ thể"
+            value={latest?.temperature ?? null}
+            field="temperature"
+            icon={<Thermometer className="w-5 h-5" />}
+            data={vitalsRecords}
+            dataKey="temperature"
+          />
+        </div>
+      )}
 
       {/* ── ECG ── */}
       <div className="grid grid-cols-1">

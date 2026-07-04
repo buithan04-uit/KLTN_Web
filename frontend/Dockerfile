@@ -20,7 +20,6 @@ COPY public ./public
 COPY next.config.ts ./
 COPY postcss.config.mjs ./
 COPY tsconfig.json ./
-COPY next-env.d.ts ./
 RUN npm run build
 
 FROM node:22-alpine AS runner

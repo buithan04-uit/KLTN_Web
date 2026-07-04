@@ -137,6 +137,9 @@ export const aiApi = {
       page?: number;
       limit?: number;
       modelName?: string;
+      from?: string;
+      to?: string;
+      status?: AiStatus;
       token?: string | null;
       consentToken?: string | null;
     } = {}
@@ -146,6 +149,9 @@ export const aiApi = {
       limit: String(options.limit || 20),
     });
     if (options.modelName) params.set("model_name", options.modelName);
+    if (options.from) params.set("from", options.from);
+    if (options.to) params.set("to", options.to);
+    if (options.status) params.set("status", options.status);
     return request<AiPredictionList>(
       `/api/ai/predictions/${encodeURIComponent(deviceId)}?${params.toString()}`,
       options

@@ -1,7 +1,7 @@
 const vitalsAiService = require('./vitals-ai.service');
 const ecgAiService = require('./ecg-ai.service');
 
-const AI_DISCLAIMER = 'Ket qua AI chi ho tro theo doi va danh gia nguy co sinh hieu, khong thay the chan doan, chi dinh dieu tri hoac quyet dinh chuyen mon cua nhan vien y te.';
+const AI_DISCLAIMER = 'Kết quả AI chỉ hỗ trợ theo dõi và đánh giá nguy cơ sinh hiệu, không thay thế chẩn đoán, chỉ định điều trị hoặc quyết định chuyên môn của nhân viên y tế.';
 
 const predictFromHealthRecord = async ({ healthRecord, patientProfile } = {}) => {
     const results = {};

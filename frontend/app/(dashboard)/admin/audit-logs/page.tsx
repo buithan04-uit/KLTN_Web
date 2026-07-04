@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   AuditLog,
   GetApiAdminSystemAuditLogsActorRole,
@@ -58,20 +58,41 @@ function ActionBadge({ action }: { action?: string }) {
   );
 }
 
-function MetaPreview({ meta }: { meta: AuditLog['meta'] }) {
-  const preview = useMemo(() => {
-    if (!meta || Object.keys(meta).length === 0) return '-';
-    try {
-      return JSON.stringify(meta);
-    } catch {
-      return '[unreadable meta]';
-    }
-  }, [meta]);
+function MetaViewer({ meta }: { meta: AuditLog['meta'] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!meta || Object.keys(meta as object).length === 0) {
+    return <span className="text-xs text-slate-400">—</span>;
+  }
+
+  let preview = '';
+  let formatted = '';
+  try {
+    preview = JSON.stringify(meta);
+    formatted = JSON.stringify(meta, null, 2);
+  } catch {
+    preview = '[unreadable meta]';
+    formatted = preview;
+  }
 
   return (
-    <code className="block max-w-md truncate rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-600">
-      {preview}
-    </code>
+    <div className="space-y-1">
+      <code
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded((e) => !e)}
+        onKeyDown={(ev) => { if (ev.key === 'Enter') setExpanded((e) => !e); }}
+        className="block max-w-xs truncate rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
+        title="Nhấn để xem đầy đủ"
+      >
+        {preview}
+      </code>
+      {expanded && (
+        <pre className="rounded-xl bg-slate-900 p-3 text-xs text-emerald-300 overflow-x-auto max-w-sm whitespace-pre leading-relaxed">
+          {formatted}
+        </pre>
+      )}
+    </div>
   );
 }
 
@@ -101,7 +122,7 @@ function AuditRow({ log }: { log: AuditLog }) {
         </div>
       </td>
       <td className="px-4 py-3 align-top">
-        <MetaPreview meta={log.meta} />
+        <MetaViewer meta={log.meta} />
       </td>
       <td className="px-4 py-3 align-top text-xs text-slate-500 whitespace-nowrap">
         {formatDateTime(log.created_at)}
@@ -145,7 +166,7 @@ export default function AdminAuditLogsPage() {
   if (user?.role !== 'admin') {
     return (
       <div className="p-8 text-center text-slate-500">
-        Ban khong co quyen truy cap trang nay.
+        Bạn không có quyền truy cập trang này.
       </div>
     );
   }
@@ -159,7 +180,7 @@ export default function AdminAuditLogsPage() {
             Audit Logs
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Theo doi hanh dong quan trong trong he thong consent, doctor access va quan tri.
+            Theo dõi hành động quan trọng trong hệ thống consent, doctor access và quản trị.
           </p>
         </div>
         <button
@@ -168,7 +189,7 @@ export default function AdminAuditLogsPage() {
           className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors"
         >
           <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
-          Lam moi
+          Làm mới
         </button>
       </div>
 
@@ -180,7 +201,7 @@ export default function AdminAuditLogsPage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-slate-800">{total}</p>
-              <p className="text-xs text-slate-500">Tong log theo bo loc</p>
+              <p className="text-xs text-slate-500">Tổng log theo bộ lọc</p>
             </div>
           </div>
         </div>
@@ -204,7 +225,7 @@ export default function AdminAuditLogsPage() {
               <p className="text-sm font-semibold text-slate-800">
                 {logs[0]?.created_at ? formatDateTime(logs[0].created_at) : '-'}
               </p>
-              <p className="text-xs text-slate-500">Log moi nhat</p>
+              <p className="text-xs text-slate-500">Log mới nhất</p>
             </div>
           </div>
         </div>
@@ -217,7 +238,7 @@ export default function AdminAuditLogsPage() {
             <input
               value={actionInput}
               onChange={(event) => setActionInput(event.target.value)}
-              placeholder="Loc theo action, vi du: consent, revoke, access..."
+              placeholder="Lọc theo action, ví dụ: consent, revoke, access..."
               className="min-w-0 flex-1 text-sm outline-none text-slate-700 placeholder:text-slate-400"
             />
           </div>
@@ -231,7 +252,7 @@ export default function AdminAuditLogsPage() {
               }}
               className="px-3 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-400"
             >
-              <option value="">Tat ca role</option>
+              <option value="">Tất cả role</option>
               <option value="admin">Admin</option>
               <option value="doctor">Doctor</option>
               <option value="patient">Patient</option>
@@ -241,7 +262,7 @@ export default function AdminAuditLogsPage() {
             type="submit"
             className="px-4 py-2.5 rounded-xl bg-sky-500 text-white text-sm font-medium hover:bg-sky-600 transition-colors"
           >
-            Ap dung
+            Áp dụng
           </button>
         </form>
       </div>
@@ -249,7 +270,7 @@ export default function AdminAuditLogsPage() {
       {error && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
-          {error instanceof Error ? error.message : 'Khong tai duoc audit logs.'}
+          {error instanceof Error ? error.message : 'Không tải được audit logs.'}
         </div>
       )}
 
@@ -261,7 +282,7 @@ export default function AdminAuditLogsPage() {
         ) : logs.length === 0 ? (
           <div className="py-14 text-center">
             <FileText className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 font-medium">Khong co audit log phu hop</p>
+            <p className="text-slate-500 font-medium">Không có audit log phù hợp</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -307,7 +328,7 @@ export default function AdminAuditLogsPage() {
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={currentPage <= 1}
                 className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Trang truoc"
+                title="Trang trước"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>

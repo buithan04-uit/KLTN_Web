@@ -114,7 +114,7 @@ const assessRuleBasedRisk = (raw) => {
     if (heartRateScore !== null) {
         components.push({
             field: 'heart_rate',
-            label: 'Nhip tim',
+            label: 'Nhịp tim',
             value: raw.heart_rate,
             unit: 'bpm',
             score: heartRateScore,
@@ -132,7 +132,7 @@ const assessRuleBasedRisk = (raw) => {
     if (temperatureScore !== null) {
         components.push({
             field: 'temperature',
-            label: 'Nhiet do',
+            label: 'Nhiệt độ',
             value: raw.temperature,
             unit: 'C',
             score: temperatureScore,
@@ -154,7 +154,7 @@ const assessRuleBasedRisk = (raw) => {
     if (systolicScore !== null) {
         components.push({
             field: 'systolic_bp',
-            label: 'Huyet ap tam thu',
+            label: 'Huyết áp tâm thu',
             value: raw.systolic_bp,
             unit: 'mmHg',
             score: systolicScore,
@@ -166,16 +166,16 @@ const assessRuleBasedRisk = (raw) => {
     const highestSingleScore = components.reduce((max, item) => Math.max(max, item.score), 0);
     let status = 'normal';
     let label = 'Low Risk';
-    let interpretation = 'Nguy co thap theo du lieu sinh hieu hien co.';
+    let interpretation = 'Nguy cơ thấp theo dữ liệu sinh hiệu hiện có.';
 
     if (totalScore >= 5 || highestSingleScore >= 3) {
         status = 'danger';
         label = 'High Risk';
-        interpretation = 'Nguy co cao, can duoc nhan vien y te xem xet cung boi canh lam sang.';
+        interpretation = 'Nguy cơ cao, cần được nhân viên y tế xem xét cùng bối cảnh lâm sàng.';
     } else if (totalScore >= 3) {
         status = 'warning';
         label = 'Moderate Risk';
-        interpretation = 'Co dau hieu can theo doi va doi chieu them.';
+        interpretation = 'Có dấu hiệu cần theo dõi và đối chiếu thêm.';
     }
 
     return {
@@ -187,8 +187,8 @@ const assessRuleBasedRisk = (raw) => {
         interpretation,
         components,
         limitations: [
-            'Khong tinh NEWS2 day du vi thieu tan so tho, tri giac/AVPU, oxy bo sung va mot so thong so lam sang.',
-            'Huyet ap tam thu la du lieu nhap ngoai, khong phai du lieu cam bien truc tiep cua thiet bi hien tai.',
+            'Không tính NEWS2 đầy đủ vì thiếu tần số thở, tri giác/AVPU, oxy bổ sung và một số thông số lâm sàng.',
+            'Huyết áp tâm thu là dữ liệu nhập ngoài, không phải dữ liệu cảm biến trực tiếp của thiết bị hiện tại.',
         ],
     };
 };
@@ -324,6 +324,15 @@ const runModel = async ({ featureVector, raw }) => {
     };
 };
 
+const RISK_STATUS_RANK = { normal: 0, warning: 1, danger: 2 };
+
+const labelToStatus = (label) => {
+    const lower = String(label || '').toLowerCase();
+    if (lower.includes('high')) return 'danger';
+    if (lower.includes('moderate') || lower.includes('medium')) return 'warning';
+    return 'normal';
+};
+
 const predict = async ({ healthRecord, patientProfile } = {}) => {
     const { raw, featureVector, coverage } = buildFeatureVector({ healthRecord, patientProfile });
 
@@ -344,24 +353,38 @@ const predict = async ({ healthRecord, patientProfile } = {}) => {
             missing_fields: coverage.missing_fields,
         };
 
-    const combinedLabel = modelPrediction?.skipped
-        ? ruleBased.label
-        : `${ruleBased.label} / Model: ${modelPrediction.label}`;
+    // Never string-concat the two labels (e.g. "High Risk / Model: Low Risk") — that produced
+    // unreadable combined labels and broke substring-based status parsing on the frontend.
+    // Instead pick a single primary verdict, escalating to whichever side is more severe so a
+    // model result never silently downgrades a rule-based alert.
+    let primaryLabel = ruleBased.label;
+    let primaryConfidence = null;
+    let primaryProbabilities = null;
+    let primarySource = 'rule_based';
 
-    const confidence = modelPrediction?.skipped ? null : modelPrediction.confidence;
+    if (!modelPrediction?.skipped) {
+        const modelStatus = labelToStatus(modelPrediction.label);
+        if (RISK_STATUS_RANK[modelStatus] >= RISK_STATUS_RANK[ruleBased.status]) {
+            primaryLabel = modelPrediction.label;
+            primaryConfidence = modelPrediction.confidence;
+            primaryProbabilities = modelPrediction.probabilities;
+            primarySource = 'model';
+        }
+    }
 
     return {
         model_name: 'vitals-risk-assessment',
-        label: combinedLabel,
-        confidence,
-        probabilities: modelPrediction?.skipped ? null : modelPrediction.probabilities,
+        label: primaryLabel,
+        confidence: primaryConfidence,
+        probabilities: primaryProbabilities,
         input_snapshot: {
             raw,
             coverage,
             rule_based: ruleBased,
             model_prediction: modelPrediction,
             result_scope: coverage.mode,
-            disclaimer: 'Ho tro theo doi nguy co sinh hieu, khong phai chan doan benh doc lap.',
+            primary_source: primarySource,
+            disclaimer: 'Hỗ trợ theo dõi nguy cơ sinh hiệu, không phải chẩn đoán bệnh độc lập.',
         },
     };
 };

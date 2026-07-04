@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, BrainCircuit, CheckCircle2, FileSearch, KeyRound, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useGetApiDevicesMy } from '@/lib/orval/api';
@@ -201,7 +201,7 @@ function formatModelProbability(confidence: number | null) {
   return `${percent.toFixed(1)}%`;
 }
 
-function PredictionCard({ row }: { row: AiPredictionRow }) {
+function PredictionCard({ row, patientLabel }: { row: AiPredictionRow; patientLabel?: string }) {
   const status = getStatus(row.model_name, row.prediction_label, row.confidence);
   const style = STATUS_STYLES[status];
   const Icon = style.icon;
@@ -225,6 +225,7 @@ function PredictionCard({ row }: { row: AiPredictionRow }) {
           </div>
         </div>
         <div className="text-right text-xs text-slate-500">
+          {patientLabel && <div className="font-semibold text-slate-600">{patientLabel}</div>}
           <div>{new Date(row.health_time || row.created_at).toLocaleString('vi-VN')}</div>
           <div>ID #{row.id}</div>
         </div>
@@ -241,16 +242,17 @@ function PredictionCard({ row }: { row: AiPredictionRow }) {
   );
 }
 
-function RiskAssessmentCard({ row }: { row: AiPredictionRow }) {
+function RiskAssessmentCard({ row, patientLabel }: { row: AiPredictionRow; patientLabel?: string }) {
   const status = getStatus(row.model_name, row.prediction_label, row.confidence);
   const style = STATUS_STYLES[status];
   const Icon = style.icon;
   const coverage = readCoverage(row);
   const ruleBased = readRuleBased(row);
   const modelPrediction = row.input_snapshot?.model_prediction as { skipped?: boolean; reason?: string; label?: string } | undefined;
+  const primarySource = row.input_snapshot?.primary_source as string | undefined;
 
   if (row.model_name !== 'vitals-risk-assessment') {
-    return <PredictionCard row={row} />;
+    return <PredictionCard row={row} patientLabel={patientLabel} />;
   }
 
   return (
@@ -269,15 +271,27 @@ function RiskAssessmentCard({ row }: { row: AiPredictionRow }) {
               </span>
             </div>
             <p className="mt-1 text-sm text-slate-600">
-              Danh gia nguy co sinh hieu | Diem rule-based {ruleBased?.total_score ?? '--'}
+              Đánh giá nguy cơ sinh hiệu | Điểm rule-based {ruleBased?.total_score ?? '--'}
             </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Rule-based luon chay khi co du lieu cam bien. Model AI chi chay full khi du ho so va huyet ap nhap ngoai.
-              {modelPrediction?.skipped ? ` Model hien bo qua: ${modelPrediction.reason || 'thieu du lieu'}.` : ` Model da chay: ${modelPrediction?.label || 'co ket qua'}.`}
+            <div className="mt-2 grid gap-1.5 text-xs text-slate-500 sm:grid-cols-2">
+              <p>
+                <span className="font-semibold text-slate-600">Rule-based:</span>{' '}
+                {ruleBased?.label || '--'} (luôn chạy khi có dữ liệu cảm biến)
+              </p>
+              <p>
+                <span className="font-semibold text-slate-600">Model AI:</span>{' '}
+                {modelPrediction?.skipped
+                  ? `chưa chạy (${modelPrediction.reason === 'model_requires_full_profile_and_blood_pressure' ? 'thiếu hồ sơ/huyết áp' : modelPrediction.reason || 'thiếu dữ liệu'})`
+                  : modelPrediction?.label || '--'}
+              </p>
+            </div>
+            <p className="mt-1.5 text-xs text-slate-400">
+              Kết luận badge phía trên lấy theo {primarySource === 'model' ? 'Model AI' : 'Rule-based'} (ưu tiên mức độ nghiêm trọng hơn giữa 2 nguồn).
             </p>
           </div>
         </div>
         <div className="text-right text-xs text-slate-500">
+          {patientLabel && <div className="font-semibold text-slate-600">{patientLabel}</div>}
           <div>{new Date(row.health_time || row.created_at).toLocaleString('vi-VN')}</div>
           <div>ID #{row.id}</div>
         </div>
@@ -286,20 +300,20 @@ function RiskAssessmentCard({ row }: { row: AiPredictionRow }) {
       <div className="mt-4">
         <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
           <Activity className="h-3.5 w-3.5" />
-          Du lieu dung de doi chieu
+          Dữ liệu dùng để đối chiếu
         </p>
         <EvidenceGrid row={row} />
       </div>
 
       {ruleBased?.components?.length ? (
         <div className="mt-4 rounded-xl border border-white/80 bg-white/70 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Thanh phan diem nguy co</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Thành phần điểm nguy cơ</p>
           <div className="mt-2 grid gap-2 md:grid-cols-2">
             {ruleBased.components.map((item) => (
               <div key={item.field} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
                 <span className="text-slate-600">
                   {item.label || getFieldLabel(item.field)}: {fmt(item.value)}{item.unit ? ` ${item.unit}` : ''}
-                  {item.source === 'manual_input' ? ' (nhap ngoai)' : ''}
+                  {item.source === 'manual_input' ? ' (nhập ngoài)' : ''}
                 </span>
                 <span className="font-semibold text-slate-800">+{item.score ?? 0}</span>
               </div>
@@ -327,10 +341,16 @@ function loadConsentSessions(): Record<string, SessionEntry> {
   }
 }
 
+const ALL_PATIENTS = '__all_patients__';
+const MERGED_PAGE_SIZE = 12;
+
 export default function AiDiagnosisPage() {
   const { token, user } = useAuth();
   const [deviceId, setDeviceId] = useState('');
   const [modelName, setModelName] = useState('');
+  const [statusFilter, setStatusFilter] = useState<AiStatus | ''>('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [page, setPage] = useState(1);
   const [accessCode, setAccessCode] = useState('');
   const [accessError, setAccessError] = useState('');
@@ -359,27 +379,83 @@ export default function AiDiagnosisPage() {
   );
 
   const doctorSessions = useMemo(() => Object.entries(sessionsMap), [sessionsMap]);
-  const selectedConsentToken = user?.role === 'doctor' ? sessionsMap[deviceId]?.token : null;
   const effectiveDeviceId = deviceId || patientDevices[0]?.device_id || doctorSessions[0]?.[0] || '';
+  const isMergedView = user?.role === 'doctor' && effectiveDeviceId === ALL_PATIENTS;
+  const selectedConsentToken = user?.role === 'doctor' && !isMergedView ? sessionsMap[deviceId]?.token : null;
 
   useEffect(() => {
     if (!deviceId && effectiveDeviceId) setDeviceId(effectiveDeviceId);
   }, [deviceId, effectiveDeviceId]);
 
   const predictionsQuery = useQuery({
-    queryKey: ['ai-predictions-page', effectiveDeviceId, modelName, page, selectedConsentToken],
+    queryKey: ['ai-predictions-page', effectiveDeviceId, modelName, statusFilter, page, selectedConsentToken, fromDate, toDate],
     queryFn: () => aiApi.getPredictions(effectiveDeviceId, {
       page,
       limit: 12,
       modelName: modelName || undefined,
+      status: statusFilter || undefined,
+      from: fromDate ? `${fromDate}T00:00:00` : undefined,
+      to: toDate ? `${toDate}T23:59:59` : undefined,
       token,
       consentToken: selectedConsentToken,
     }),
-    enabled: !!token && !!effectiveDeviceId && (user?.role !== 'doctor' || !!selectedConsentToken),
+    enabled: !isMergedView && !!token && !!effectiveDeviceId && (user?.role !== 'doctor' || !!selectedConsentToken),
     refetchInterval: 30_000,
   });
 
-  const disclaimerText = predictionsQuery.data?.disclaimer
+  // Doctor "Tất cả bệnh nhân" view: fan out one request per active consent session
+  // (backend's consent gate is per-device, so this merges client-side instead of
+  // changing the consent model) and merge+sort the results by measurement time.
+  const mergedQueries = useQueries({
+    queries: isMergedView
+      ? doctorSessions.map(([devId, session]) => ({
+          queryKey: ['ai-predictions-merged', devId, modelName, statusFilter, fromDate, toDate, session.token],
+          queryFn: () => aiApi.getPredictions(devId, {
+            page: 1,
+            limit: 50,
+            modelName: modelName || undefined,
+            status: statusFilter || undefined,
+            from: fromDate ? `${fromDate}T00:00:00` : undefined,
+            to: toDate ? `${toDate}T23:59:59` : undefined,
+            token,
+            consentToken: session.token,
+          }),
+          enabled: !!token,
+          refetchInterval: 30_000,
+        }))
+      : [],
+  });
+
+  const mergedRows = useMemo(() => {
+    if (!isMergedView) return [];
+    const rows: Array<AiPredictionRow & { _patientLabel: string }> = [];
+    doctorSessions.forEach(([devId, session], idx) => {
+      const data = mergedQueries[idx]?.data?.data || [];
+      const label = `${session.patient_name || 'Bệnh nhân'} · ${session.device_name || devId}`;
+      data.forEach((row) => rows.push({ ...row, _patientLabel: label }));
+    });
+    return rows.sort((a, b) => {
+      const at = new Date(a.health_time || a.created_at).getTime();
+      const bt = new Date(b.health_time || b.created_at).getTime();
+      return bt - at;
+    });
+  }, [isMergedView, doctorSessions, mergedQueries]);
+
+  const mergedIsLoading = isMergedView && mergedQueries.some((q) => q.isLoading);
+  const mergedFailedCount = mergedQueries.filter((q) => q.isError).length;
+  const mergedIsError = isMergedView && mergedQueries.length > 0 && mergedFailedCount === mergedQueries.length;
+  const mergedPages = Math.max(1, Math.ceil(mergedRows.length / MERGED_PAGE_SIZE));
+  const mergedPageRows = mergedRows.slice((page - 1) * MERGED_PAGE_SIZE, page * MERGED_PAGE_SIZE);
+
+  const displayedRows: Array<AiPredictionRow & { _patientLabel?: string }> = isMergedView
+    ? mergedPageRows
+    : (predictionsQuery.data?.data ?? []);
+  const displayedTotal = isMergedView ? mergedRows.length : (predictionsQuery.data?.pagination.total ?? 0);
+  const displayedPages = isMergedView ? mergedPages : (predictionsQuery.data?.pagination.pages ?? 1);
+  const isLoading = isMergedView ? mergedIsLoading : predictionsQuery.isLoading;
+  const isError = isMergedView ? mergedIsError : predictionsQuery.isError;
+
+  const disclaimerText = (isMergedView ? mergedQueries.find((q) => q.data?.disclaimer)?.data?.disclaimer : predictionsQuery.data?.disclaimer)
     || 'Kết quả AI chỉ hỗ trợ theo dõi và đánh giá nguy cơ sinh hiệu, không thay thế chẩn đoán hoặc quyết định điều trị.';
 
   const handleVerifyCode = async () => {
@@ -425,10 +501,10 @@ export default function AiDiagnosisPage() {
         token,
         consentToken: selectedConsentToken,
       });
-      setRunMessage(`Da tao ${resp.persisted_count} ket qua danh gia moi.`);
+      setRunMessage(`Đã tạo ${resp.persisted_count} kết quả đánh giá mới.`);
       await predictionsQuery.refetch();
     } catch (err) {
-      setRunMessage(err instanceof Error ? err.message : 'Khong chay duoc danh gia AI.');
+      setRunMessage(err instanceof Error ? err.message : 'Không chạy được đánh giá AI.');
     } finally {
       setIsRunningAssessment(false);
     }
@@ -533,7 +609,7 @@ export default function AiDiagnosisPage() {
           <button
             type="button"
             onClick={handleSaveBloodPressure}
-            disabled={!effectiveDeviceId || isSavingBp || (user?.role === 'doctor' && !selectedConsentToken)}
+            disabled={isMergedView || !effectiveDeviceId || isSavingBp || (user?.role === 'doctor' && !selectedConsentToken)}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {isSavingBp ? 'Đang lưu...' : 'Lưu huyết áp nhập ngoài'}
@@ -559,7 +635,7 @@ export default function AiDiagnosisPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-5">
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-[220px] flex-1">
-              <label className="text-sm font-medium text-slate-700">Nhap ma dong thuan cua benh nhan</label>
+              <label className="text-sm font-medium text-slate-700">Nhập mã đồng thuận của bệnh nhân</label>
               <input
                 value={accessCode}
                 onChange={(e) => setAccessCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -582,9 +658,9 @@ export default function AiDiagnosisPage() {
       )}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="text-sm font-medium text-slate-700">
-            Thiet bi
+            Thiết bị
             {user?.role === 'doctor' ? (
               <select
                 value={effectiveDeviceId}
@@ -592,8 +668,11 @@ export default function AiDiagnosisPage() {
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
               >
                 {doctorSessions.length === 0 && <option value="">Chưa có phiên đồng thuận</option>}
+                {doctorSessions.length > 1 && (
+                  <option value={ALL_PATIENTS}>Tất cả bệnh nhân ({doctorSessions.length})</option>
+                )}
                 {doctorSessions.map(([id, session]) => (
-                  <option key={id} value={id}>{session.patient_name || 'Benh nhan'} - {session.device_name || id}</option>
+                  <option key={id} value={id}>{session.patient_name || 'Bệnh nhân'} - {session.device_name || id}</option>
                 ))}
               </select>
             ) : (
@@ -610,47 +689,104 @@ export default function AiDiagnosisPage() {
             )}
           </label>
           <label className="text-sm font-medium text-slate-700">
-            Mo hinh
+            Mô hình
             <select
               value={modelName}
               onChange={(e) => { setModelName(e.target.value); setPage(1); }}
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
             >
-              <option value="">Tat ca mo hinh</option>
+              <option value="">Tất cả mô hình</option>
               <option value="vitals-risk-assessment">Đánh giá nguy cơ sinh hiệu</option>
               <option value="ecg-arrhythmia">Điện tim ECG</option>
+            </select>
+          </label>
+          <label className="text-sm font-medium text-slate-700">
+            Mức độ
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value as AiStatus | ''); setPage(1); }}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
+            >
+              <option value="">Tất cả mức độ</option>
+              <option value="danger">Cần bác sĩ xem xét</option>
+              <option value="warning">Cần theo dõi</option>
+              <option value="normal">Ổn định</option>
+              <option value="unknown">Chưa rõ</option>
             </select>
           </label>
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-slate-400">Tổng kết</p>
             <p className="mt-1 text-lg font-semibold text-slate-800">
-              {predictionsQuery.data?.pagination.total ?? 0} kết quả
+              {displayedTotal} kết quả{isMergedView ? ` · ${doctorSessions.length} bệnh nhân` : ''}
             </p>
           </div>
+        </div>
+        {mergedFailedCount > 0 && mergedFailedCount < mergedQueries.length && (
+          <p className="mt-2 text-xs text-amber-600">
+            Không tải được kết quả của {mergedFailedCount}/{mergedQueries.length} bệnh nhân (phiên đồng thuận có thể đã hết hạn).
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="text-sm font-medium text-slate-700">
+            Từ ngày
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(e) => { setFromDate(e.target.value); setPage(1); }}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
+            />
+          </label>
+          <label className="text-sm font-medium text-slate-700">
+            Đến ngày
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(e) => { setToDate(e.target.value); setPage(1); }}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400"
+            />
+          </label>
+          {(fromDate || toDate) && (
+            <button
+              type="button"
+              onClick={() => { setFromDate(''); setToDate(''); setPage(1); }}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              Xóa lọc ngày
+            </button>
+          )}
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={handleRunAssessment}
-            disabled={!effectiveDeviceId || isRunningAssessment || (user?.role === 'doctor' && !selectedConsentToken)}
+            disabled={isMergedView || !effectiveDeviceId || isRunningAssessment || (user?.role === 'doctor' && !selectedConsentToken)}
             className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
           >
             <BrainCircuit className="h-4 w-4" />
-            {isRunningAssessment ? 'Dang danh gia...' : 'Chay danh gia moi nhat'}
+            {isRunningAssessment ? 'Đang đánh giá...' : 'Chạy đánh giá mới nhất'}
           </button>
+          {isMergedView && (
+            <p className="text-sm text-slate-500">Chọn một bệnh nhân cụ thể để chạy đánh giá mới hoặc nhập huyết áp.</p>
+          )}
           {runMessage && <p className="text-sm text-slate-600">{runMessage}</p>}
         </div>
       </section>
 
-      {predictionsQuery.isLoading ? (
+      {isLoading ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Đang tải kết quả AI...</div>
-      ) : predictionsQuery.isError ? (
+      ) : isError ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
-          {predictionsQuery.error instanceof Error ? predictionsQuery.error.message : 'Không tải được kết quả AI'}
+          {isMergedView
+            ? 'Không tải được kết quả AI cho bất kỳ bệnh nhân nào (phiên đồng thuận có thể đã hết hạn).'
+            : predictionsQuery.error instanceof Error ? predictionsQuery.error.message : 'Không tải được kết quả AI'}
         </div>
-      ) : predictionsQuery.data?.data.length ? (
+      ) : displayedRows.length ? (
         <div className="space-y-3">
-          {predictionsQuery.data.data.map((row) => <RiskAssessmentCard key={row.id} row={row} />)}
+          {displayedRows.map((row) => (
+            <RiskAssessmentCard key={`${row.device_id}-${row.id}`} row={row} patientLabel={row._patientLabel} />
+          ))}
         </div>
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center">
@@ -660,7 +796,7 @@ export default function AiDiagnosisPage() {
         </div>
       )}
 
-      {predictionsQuery.data && predictionsQuery.data.pagination.pages > 1 && (
+      {displayedPages > 1 && (
         <div className="flex items-center justify-end gap-2">
           <button
             type="button"
@@ -668,14 +804,14 @@ export default function AiDiagnosisPage() {
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 disabled:opacity-50"
           >
-            Trang truoc
+            Trang trước
           </button>
           <span className="text-sm text-slate-500">
-            Trang {page}/{predictionsQuery.data.pagination.pages}
+            Trang {page}/{displayedPages}
           </span>
           <button
             type="button"
-            disabled={page >= predictionsQuery.data.pagination.pages}
+            disabled={page >= displayedPages}
             onClick={() => setPage((p) => p + 1)}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 disabled:opacity-50"
           >

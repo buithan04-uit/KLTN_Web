@@ -5,9 +5,9 @@ services:
     container_name: telehealth_db
     restart: always
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=123456
-      - POSTGRES_DB=telehealth_system
+      - POSTGRES_USER=${DB_USER:-admin}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env (see .env.example)}
+      - POSTGRES_DB=${DB_NAME:-telehealth_system}
     ports:
       - "5432:5432"
     volumes:
@@ -48,7 +48,7 @@ services:
       - ./backend/.env
     environment:
       # Override URL localhost → tên service trong Docker network
-      - DATABASE_URL=postgres://admin:123456@db:5432/telehealth_system
+      - DATABASE_URL=postgres://${DB_USER:-admin}:${DB_PASSWORD:?Set DB_PASSWORD in .env (see .env.example)}@db:5432/${DB_NAME:-telehealth_system}
       - MQTT_BROKER=mqtt://mosquitto:1883
       - FRONTEND_URL=http://localhost:3001
     depends_on:

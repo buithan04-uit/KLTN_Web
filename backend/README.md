@@ -85,7 +85,7 @@ Swagger: `http://localhost:5000/api-docs`
 | Biến | Ví dụ | Ý nghĩa |
 | --- | --- | --- |
 | `PORT` | `5000` | Cổng HTTP server. |
-| `DATABASE_URL` | `postgres://admin:123456@localhost:5432/telehealth_system` | Chuỗi kết nối PostgreSQL/TimescaleDB. |
+| `DATABASE_URL` | `postgres://admin:<db_password>@localhost:5432/telehealth_system` | Chuỗi kết nối PostgreSQL/TimescaleDB. |
 | `MQTT_BROKER` | `mqtt://localhost:1883` | Broker MQTT local hoặc cloud. |
 | `MQTT_SUBSCRIBE_TOPIC` | `vitals/+/data` | Topic backend subscribe. |
 | `MQTT_USERNAME` / `MQTT_PASSWORD` | `server` / `...` | Credential MQTT cho backend. |

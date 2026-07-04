@@ -33,8 +33,11 @@ const normalizeLabel = (value) => String(value || '').trim();
 const getPredictionStatus = (modelName, label, confidence = null) => {
     const normalized = normalizeLabel(label);
     const lower = normalized.toLowerCase();
-    const conf = Number(confidence);
-    const hasConfidence = Number.isFinite(conf);
+    // Number(null) === 0, which is finite — must check typeof first or a missing
+    // confidence (the normal case for rule-based-only results) gets treated as
+    // "confidence exactly 0" instead of "unknown", silently downgrading severity below.
+    const hasConfidence = typeof confidence === 'number' && Number.isFinite(confidence);
+    const conf = confidence;
 
     if (!normalized) return 'unknown';
 
@@ -152,32 +155,18 @@ const buildAiSummary = (predictions, limit) => {
         .filter(Boolean)
         .sort();
 
-    const headlineByStatus = {
-        danger: 'Cần chú ý: AI phát hiện dấu hiệu bất thường trong cửa sổ dữ liệu gần đây',
-        warning: 'Theo dõi thêm: AI ghi nhận một số dấu hiệu cần bác sĩ xem xét',
-        normal: 'Ổn định: AI chưa ghi nhận dấu hiệu bất thường rõ trong cửa sổ dữ liệu gần đây',
-        unknown: 'Chưa đủ dữ liệu để tổng hợp chẩn đoán AI',
-    };
-
-    const summaryByStatus = {
-        danger: 'Kết quả này được tổng hợp từ nhiều phiên dữ liệu gần đây, không phải cảnh báo tức thời từng mẫu.',
-        warning: 'Nên đối chiếu với triệu chứng, tiền sử bệnh và dữ liệu đo thực tế trước khi đưa ra kết luận.',
-        normal: 'Tiếp tục theo dõi định kỳ; kết quả AI chỉ có giá trị tham khảo.',
-        unknown: 'Cần thêm dữ liệu sinh hiệu/ECG hợp lệ để AI có thể đánh giá.',
-    };
-
     const riskHeadlineByStatus = {
-        danger: 'Can chu y: AI ghi nhan nguy co sinh hieu cao trong cua so du lieu gan day',
-        warning: 'Theo doi them: AI ghi nhan mot so dau hieu sinh hieu can doi chieu',
-        normal: 'On dinh: AI chua ghi nhan nguy co sinh hieu ro trong cua so du lieu gan day',
-        unknown: 'Chua du du lieu de tong hop danh gia nguy co AI',
+        danger: 'Cần chú ý: AI ghi nhận nguy cơ sinh hiệu cao trong cửa sổ dữ liệu gần đây',
+        warning: 'Theo dõi thêm: AI ghi nhận một số dấu hiệu sinh hiệu cần đối chiếu',
+        normal: 'Ổn định: AI chưa ghi nhận nguy cơ sinh hiệu rõ trong cửa sổ dữ liệu gần đây',
+        unknown: 'Chưa đủ dữ liệu để tổng hợp đánh giá nguy cơ AI',
     };
 
     const riskSummaryByStatus = {
-        danger: 'Ket qua duoc tong hop tu rule-based score va mo hinh khi du du lieu; khong phai canh bao chan doan tuc thoi.',
-        warning: 'Can doi chieu voi trieu chung, tien su benh, tinh trang cam bien va du lieu do thuc te.',
-        normal: 'Tiep tuc theo doi dinh ky; ket qua AI chi co gia tri ho tro theo doi.',
-        unknown: 'Can them du lieu sinh hieu hop le de AI co the danh gia nguy co.',
+        danger: 'Kết quả được tổng hợp từ rule-based score và mô hình khi đủ dữ liệu; không phải cảnh báo chẩn đoán tức thời.',
+        warning: 'Cần đối chiếu với triệu chứng, tiền sử bệnh, tình trạng cảm biến và dữ liệu đo thực tế.',
+        normal: 'Tiếp tục theo dõi định kỳ; kết quả AI chỉ có giá trị hỗ trợ theo dõi.',
+        unknown: 'Cần thêm dữ liệu sinh hiệu hợp lệ để AI có thể đánh giá nguy cơ.',
     };
 
     return {
@@ -250,7 +239,7 @@ const predictLatest = async (req, res) => {
         });
     } catch (err) {
         console.error('predictLatest AI error:', err.message);
-        return res.status(500).json({ error: 'Loi server' });
+        return res.status(500).json({ error: 'Lỗi server' });
     }
 };
 
@@ -266,13 +255,13 @@ const recordManualBloodPressure = async (req, res) => {
         const diastolic = Number(req.body?.diastolic_bp ?? req.body?.diastolic);
 
         if (!Number.isFinite(systolic) || systolic < 50 || systolic > 260) {
-            return res.status(400).json({ error: 'Huyet ap tam thu phai nam trong khoang 50-260 mmHg' });
+            return res.status(400).json({ error: 'Huyết áp tâm thu phải nằm trong khoảng 50-260 mmHg' });
         }
         if (!Number.isFinite(diastolic) || diastolic < 30 || diastolic > 180) {
-            return res.status(400).json({ error: 'Huyet ap tam truong phai nam trong khoang 30-180 mmHg' });
+            return res.status(400).json({ error: 'Huyết áp tâm trương phải nằm trong khoảng 30-180 mmHg' });
         }
         if (diastolic >= systolic) {
-            return res.status(400).json({ error: 'Huyet ap tam truong phai nho hon huyet ap tam thu' });
+            return res.status(400).json({ error: 'Huyết áp tâm trương phải nhỏ hơn huyết áp tâm thu' });
         }
 
         const map = (systolic + 2 * diastolic) / 3;
@@ -286,14 +275,28 @@ const recordManualBloodPressure = async (req, res) => {
         return res.status(201).json({
             data: inserted,
             source: 'manual_input',
-            message: 'Da luu huyet ap nhap ngoai cho thiet bi',
+            message: 'Đã lưu huyết áp nhập ngoài cho thiết bị',
             disclaimer: aiService.AI_DISCLAIMER,
         });
     } catch (err) {
         console.error('recordManualBloodPressure AI error:', err.message);
-        return res.status(500).json({ error: 'Loi server' });
+        return res.status(500).json({ error: 'Lỗi server' });
     }
 };
+
+const parseDateParam = (value) => {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+// Status (danger/warning/normal/unknown) is derived from label+confidence, not a DB column,
+// so it can't be pushed into the SQL WHERE clause without duplicating getPredictionStatus's
+// logic there too. Instead, when a status filter is requested, pull a bounded recent window
+// (STATUS_FILTER_SCAN_LIMIT rows matching device/model/date) and filter+paginate in JS. This
+// is correct for any realistic per-device history size in this project but is not an
+// all-time-accurate count if a single device ever exceeds the scan limit.
+const STATUS_FILTER_SCAN_LIMIT = 300;
 
 const listPredictions = async (req, res) => {
     try {
@@ -306,19 +309,49 @@ const listPredictions = async (req, res) => {
         const page = parseInt(req.query.page, 10) || 1;
         const limit = parseInt(req.query.limit, 10) || 20;
         const model_name = String(req.query.model_name || '').trim();
-        const data = await AiPredictionModel.listByDevice(deviceId, {
-            page,
-            limit,
+        const from = parseDateParam(req.query.from);
+        const to = parseDateParam(req.query.to);
+        const status = String(req.query.status || '').trim().toLowerCase();
+        const requireEvidence = req.user.role === 'doctor';
+
+        if (!status) {
+            const data = await AiPredictionModel.listByDevice(deviceId, {
+                page,
+                limit,
+                model_name,
+                from,
+                to,
+                requireEvidence,
+            });
+            return res.json({
+                ...data,
+                disclaimer: aiService.AI_DISCLAIMER,
+            });
+        }
+
+        const scanned = await AiPredictionModel.listByDevice(deviceId, {
+            page: 1,
+            limit: STATUS_FILTER_SCAN_LIMIT,
             model_name,
-            requireEvidence: req.user.role === 'doctor',
+            from,
+            to,
+            requireEvidence,
         });
+        const matching = scanned.data.filter(
+            (row) => getPredictionStatus(row.model_name, row.prediction_label, row.confidence) === status
+        );
+        const total = matching.length;
+        const pages = Math.max(1, Math.ceil(total / limit));
+        const offset = (Math.max(page, 1) - 1) * limit;
+
         return res.json({
-            ...data,
+            data: matching.slice(offset, offset + limit),
+            pagination: { page, limit, total, pages },
             disclaimer: aiService.AI_DISCLAIMER,
         });
     } catch (err) {
         console.error('listPredictions AI error:', err.message);
-        return res.status(500).json({ error: 'Loi server' });
+        return res.status(500).json({ error: 'Lỗi server' });
     }
 };
 
@@ -345,7 +378,7 @@ const getSummary = async (req, res) => {
         });
     } catch (err) {
         console.error('getSummary AI error:', err.message);
-        return res.status(500).json({ error: 'Loi server' });
+        return res.status(500).json({ error: 'Lỗi server' });
     }
 };
 
