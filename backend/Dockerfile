@@ -6,6 +6,6 @@ COPY index.js ./
 COPY src ./src
 COPY migrations ./migrations
 COPY scripts ./scripts
-RUN mkdir -p uploads
+RUN mkdir -p uploads/avatars
 EXPOSE 5000
 CMD ["npm", "start"]

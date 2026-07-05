@@ -56,6 +56,9 @@ services:
     ports:
       # Đặt BIND_ADDR=0.0.0.0 trong .env nếu truy cập trực tiếp IP:port (không qua reverse proxy)
       - "${BIND_ADDR:-127.0.0.1}:5000:5000"
+    volumes:
+      # Avatar/upload phải sống sót qua các lần rebuild image
+      - backend_uploads:/app/uploads
     environment:
       - NODE_ENV=production
       - PORT=5000
@@ -99,6 +102,8 @@ services:
 
 volumes:
   pgdata:
+    driver: local
+  backend_uploads:
     driver: local
 
 networks:

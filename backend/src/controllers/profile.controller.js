@@ -1,11 +1,17 @@
 const path = require('path');
+const fs = require('fs');
 const multer = require('multer');
 const UserModel = require('../models/user.model');
 
 // ── Multer: lưu ảnh vào uploads/avatars/ ────────────────────────────────────
+// Multer KHÔNG tự tạo thư mục đích; trong container mới chỉ có uploads/ nên
+// thiếu avatars/ làm upload lỗi ENOENT. Tạo sẵn ngay khi module load.
+const AVATAR_DIR = path.join(__dirname, '../../uploads/avatars');
+fs.mkdirSync(AVATAR_DIR, { recursive: true });
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, path.join(__dirname, '../../uploads/avatars'));
+        cb(null, AVATAR_DIR);
     },
     filename: (req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
@@ -109,7 +115,20 @@ const updateProfile = async (req, res) => {
 
 // ── POST /api/profile/avatar ─────────────────────────────────────────────────
 const uploadAvatar = [
-    upload.single('avatar'),
+    // Bắt lỗi multer (file quá 2MB, sai định dạng, lỗi ghi đĩa) trả JSON rõ ràng
+    // thay vì rơi vào error handler mặc định của Express.
+    (req, res, next) => {
+        upload.single('avatar')(req, res, (err) => {
+            if (err) {
+                const msg = err.code === 'LIMIT_FILE_SIZE'
+                    ? 'Ảnh vượt quá giới hạn 2MB'
+                    : err.message || 'Upload ảnh thất bại';
+                console.error('uploadAvatar multer error:', err.message);
+                return res.status(400).json({ error: msg });
+            }
+            return next();
+        });
+    },
     async (req, res) => {
         if (!req.file) return res.status(400).json({ error: 'Không có file ảnh' });
         try {
