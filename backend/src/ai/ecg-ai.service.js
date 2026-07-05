@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const { pathToFileURL } = require('url');
 const { loadTensorflow } = require('./tensorflow');
 const { graphModelFileHandler } = require('./filesystem-io');
 const { toFiniteNumber } = require('./preprocessing');
@@ -119,7 +118,14 @@ const loadModel = async () => {
         const fileHandler = tf.io?.fileSystem
             ? tf.io.fileSystem(MODEL_JSON)
             : graphModelFileHandler(tf, MODEL_JSON);
-        modelPromise = tf.loadGraphModel(fileHandler).catch(() => tf.loadLayersModel(pathToFileURL(MODEL_JSON).href));
+        // Dung CUNG mot fileHandler cho ca hai loai model (graph-model va
+        // layers-model). Truoc day fallback dung pathToFileURL(...).href,
+        // nhung tren Windows URL "file:///E:/..." bi tfjs-node parse sai
+        // thanh duong dan trung o dia "E:\E:\..." -> load that bai. IOHandler
+        // (ca fileSystem() lan graphModelFileHandler tu viet) tra ve dung
+        // ModelArtifacts chuan, dung duoc cho ca loadGraphModel va
+        // loadLayersModel, khong phu thuoc he dieu hanh.
+        modelPromise = tf.loadGraphModel(fileHandler).catch(() => tf.loadLayersModel(fileHandler));
     }
     return modelPromise;
 };
