@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
+import { useGetProfile } from '@/lib/orval/api';
 import {
   Activity,
   AlertTriangle,
@@ -23,6 +25,8 @@ import {
 import { useAuth } from '@/context/AuthContext';
 
 type AppRole = 'admin' | 'doctor' | 'patient';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
 const navItems = [
   { href: '/dashboard', label: 'Tổng quan', icon: Activity },
@@ -43,6 +47,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Avatar không có trong AuthContext (chỉ lưu id/email/role/full_name lúc login),
+  // nên phải fetch riêng ở đây. React Query cache lại giúp trang Hồ sơ không tốn thêm request.
+  const { data: profileResp } = useGetProfile({ query: { enabled: !!token } });
+  const avatarUrl = profileResp?.status === 200 ? profileResp.data.avatar_url : null;
+  const avatarSrc = avatarUrl ? `${API_URL}${avatarUrl}` : null;
 
   useEffect(() => {
     if (!isLoading && !token) router.push('/login');
@@ -134,8 +144,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               sidebarOpen ? 'gap-3 px-3 py-2.5' : 'justify-center px-0 py-2.5',
             )}
           >
-            <div className="w-8 h-8 rounded-full bg-sky-500 flex items-center justify-center text-xs font-bold shrink-0">
-              <User className="w-4 h-4" />
+            <div className="w-8 h-8 rounded-full bg-sky-500 flex items-center justify-center text-xs font-bold shrink-0 overflow-hidden">
+              {avatarSrc ? (
+                <Image src={avatarSrc} alt="avatar" width={32} height={32} className="object-cover w-full h-full" unoptimized />
+              ) : (
+                <User className="w-4 h-4" />
+              )}
             </div>
             {sidebarOpen && (
               <div className="min-w-0">
